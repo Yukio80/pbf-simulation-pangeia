@@ -26,6 +26,8 @@ from pangeia.external_agents.protocol import PAPProtocol
 from pangeia.external_agents.icarus_gateway import IcarusGateway
 from pangeia.news.newsroom import NewsRoom
 from pangeia.core.collective_memory import CollectiveMemorySystem, merge_emotional_profiles
+from pangeia.engine.agent_array import AgentArray
+from pangeia.engine.batch_processor import BatchProcessor
 from pangeia.persistence import AuditRecorder, AuditLog, InMemoryAuditLog, PersistenceBackend
 
 
@@ -66,6 +68,10 @@ class Simulation:
         self._setup_audit_log(audit_log)
         self._initialize_population()
         self._initialize_stratification()
+        self.agent_array = AgentArray(self.agents)
+        self.batch_processor = BatchProcessor.from_seed(
+            self.agent_array, self.config.world.seed
+        )
 
     def _setup_audit_log(self, audit_log: Optional[AuditLog] = None):
         persistence = self.config.persistence
@@ -255,7 +261,6 @@ class Simulation:
                 agent.state.political_alignment += 0.01
             elif agent.state.wealth < 20:
                 agent.state.political_alignment -= 0.01
-            # Rebeldia geracional — ponderada por coorte etária
             rp = self.collective_memory.rebellion_probability
             cohort_bias = self.collective_memory.get_cohort_rebellion_bias(agent.state.age)
             effective_rp = rp * cohort_bias
@@ -281,8 +286,14 @@ class Simulation:
                 agent.needs.satisfy(autonomy=0.01, competence=0.005)
             if len(agent.social.relationships) > 3:
                 agent.needs.satisfy(belonging=0.01)
+            n_keep = 0
             for em in agent.emotional_memories:
                 em.decay(rate=0.002)
+                if em.intensity > 0.01:
+                    agent.emotional_memories[n_keep] = em
+                    n_keep += 1
+            if n_keep < len(agent.emotional_memories):
+                del agent.emotional_memories[n_keep:]
 
         # --- Registrar eventos emocionais para life_events recentes ---
         for agent in self.agents.values():

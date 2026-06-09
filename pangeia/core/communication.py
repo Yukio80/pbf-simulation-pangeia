@@ -27,9 +27,13 @@ class CommunicationSystem:
             "whisper": [],
         }
 
-    def broadcast(self, message: Message, agents: Dict[str, "Agent"]):
+    def broadcast(self, message: Message, agents: Dict[str, "Agent"],
+                  max_targets: int = 50):
         self.channels["public"].append(message)
         target_ids = message.target_ids or list(agents.keys())
+        if len(target_ids) > max_targets:
+            import random
+            target_ids = random.sample(target_ids, max_targets)
         for tid in target_ids:
             if tid in agents:
                 recipient = agents[tid]
