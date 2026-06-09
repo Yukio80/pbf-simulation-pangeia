@@ -41,6 +41,10 @@ Bem-vindo a Pangeia.
 - [API](#api)
 - [Arquitetura](#arquitetura)
 - [Agentes](#agentes)
+- [Sistema de Personalidade](#sistema-de-personalidade)
+- [Memória Coletiva](#memória-coletiva)
+- [NarrativeActor](#narrativeactor)
+- [CivilizationIdentity](#civilizationidentity)
 - [Icarus — Governança Externa](#icarus--governança-externa)
 - [PAP — Protocolo de Agentes Externos](#pap--protocolo-de-agentes-externos)
 - [Pangeia News](#pangeia-news)
@@ -137,7 +141,22 @@ Tick    20 | Pop: 200/200 | Era: Agrarian | Polar: 0.15 | Feliz: 0.63 | Estab: 0
 | `GET` | `/dashboard` | Dashboard HTML interativo |
 | `WS` | `/ws` | WebSocket com atualizações em tempo real |
 
+### Memória Coletiva
+
+| Método | Rota | Descrição |
+|--------|------|-----------|
+| `GET` | `/collective_memory` | Sumário completo (narrativas, rebeliões, identidade, atores, volatilidade) |
+| `GET` | `/collective_memory/myths` | Mitos ativos (narrativas com 3+ gerações) |
+| `GET` | `/collective_memory/volatility` | Métrica composta de volatilidade histórica |
+| `GET` | `/collective_memory/narratives/{type}` | Narrativas por tipo (foundational/reformist/revolutionary/myth) |
+| `GET` | `/collective_memory/identity` | Identidade da civilização (6 dimensões) |
+| `GET` | `/collective_memory/actors` | Atores narrativos (quem promove/ataca cada narrativa) |
+| `GET` | `/collective_memory/actors/{agent_id}` | Detalhes de um ator específico |
+
 ### Agentes externos (PAP)
+
+| Método | Rota | Descrição |
+|--------|------|-----------|
 
 | Método | Rota | Descrição |
 |--------|------|-----------|
@@ -170,7 +189,7 @@ Tick    20 | Pop: 200/200 | Era: Agrarian | Polar: 0.15 | Feliz: 0.63 | Estab: 0
 ```
                     ┌─────────────────────────────┐
                     │       FastAPI Server         │
-                    │  (30+ endpoints + WebSocket) │
+                    │  (35+ endpoints + WebSocket) │
                     └──────────┬──────────────────┘
                                │
                     ┌──────────▼──────────────────┐
@@ -178,22 +197,29 @@ Tick    20 | Pop: 200/200 | Era: Agrarian | Polar: 0.15 | Feliz: 0.63 | Estab: 0
                     │  (loop principal de ticks)   │
                     └──┬──┬──┬──┬──┬──┬──┬──┬────┘
                        │  │  │  │  │  │  │  │
-         ┌─────────────┘  │  │  │  │  │  │  └──────────┐
-         │                │  │  │  │  │  │              │
-    ┌────▼───┐   ┌────────▼──▼──▼──▼──▼──▼──┐   ┌──────▼──────┐
-    │Economy │   │      Agent Loop           │   │  External   │
-    │Market  │   │  decide() → process()     │   │  Agents     │
-    │Companies│  │  ~7 classes de agentes    │   │  (PAP)      │
-    └────────┘   └──────────┬────────────────┘   └──────┬──────┘
-                            │                           │
-               ┌────────────┼───────────────────────────┘
-               │            │
-          ┌────▼────┐  ┌────▼────┐  ┌────▼────┐  ┌────▼────┐
-          │World    │  │Culture  │  │Governance│  │Tech     │
-          │Recursos │  │Religião │  │Leis      │  │Árvore   │
-          │Eventos  │  │Ideologia│  │Eleições  │  │26 techs │
-          │Territó. │  │Memes    │  │Votações  │  │6 eras   │
-          └─────────┘  └─────────┘  └─────────┘  └─────────┘
+          ┌─────────────┘  │  │  │  │  │  │  └──────────┐
+          │                │  │  │  │  │  │              │
+     ┌────▼───┐   ┌────────▼──▼──▼──▼──▼──▼──┐   ┌──────▼──────┐
+     │Economy │   │      Agent Loop           │   │  External   │
+     │Market  │   │  decide() → process()     │   │  Agents     │
+     │Companies│  │  ~8 classes de agentes    │   │  (PAP)      │
+     └────────┘   │  Personalidade 5 camadas  │   └──────┬──────┘
+                  │  Memória coletiva          │          │
+                  └──────────┬────────────────┘          │
+                             │                           │
+                ┌────────────┼───────────────────────────┘
+                │            │
+           ┌────▼────┐  ┌────▼────┐  ┌────▼────┐  ┌────▼────┐
+           │World    │  │Culture  │  │Governance│  │Tech     │
+           │Recursos │  │Religião │  │Leis      │  │Árvore   │
+           │Eventos  │  │Ideologia│  │Eleições  │  │26 techs │
+           │Territó. │  │Memes    │  │Votações  │  │6 eras   │
+           └─────────┘  └─────────┘  └─────────┘  └─────────┘
+           ┌─────────┐  ┌─────────┐  ┌─────────┐  ┌─────────┐
+           │Narrative│  │Collect. │  │Civiliz. │  │Icarus   │
+           │Actors   │  │Memory   │  │Identity │  │Gateway  │
+           │(5 roles)│  │4 tipos  │  │6 dims   │  │4 strat. │
+           └─────────┘  └─────────┘  └─────────┘  └─────────┘
 ```
 
 ### Ciclo de um tick
@@ -206,9 +232,14 @@ Tick    20 | Pop: 200/200 | Era: Agrarian | Polar: 0.15 | Feliz: 0.63 | Estab: 0
 6. **Technology.step()** — pesquisa, descoberta
 7. **Diplomacy.step()** — relações entre facções
 8. **Stratification** — classes sociais, mobilidade
-9. **Metrics** — coleta de indicadores
-10. **NewsRoom** — detecção de eventos noticiáveis
-11. **AuditLog** — persistência
+9. **Personalidade** — evolução lenta (mutate 0.005), necessidades, memória emocional
+10. **CollectiveMemory.step()** — gerações, rebeliões, contranarrativas
+11. **NarrativeActor.step()** — atores promovem/atacam narrativas
+12. **CivilizationIdentity** — identidade é recomputada
+13. **Metrics** — coleta de indicadores
+14. **NewsRoom** — detecção de eventos noticiáveis
+15. **Icarus** — ciclo de observação e decisão
+16. **AuditLog** — persistência
 
 ### Sistema de Percepção com Cache
 
@@ -233,8 +264,10 @@ Cada agente chama `perceive(sim)` que monta um dicionário com o estado do mundo
 
 Cada agente possui:
 
-- **Personalidade** OCEAN (5 traços normalizados)
-- **Estado emocional** (felicidade, medo, raiva, confiança)
+- **Personalidade**: 11 traços de Temperamento (distribuição normal), 9 Arquétipos, 30+ perfis emocionais
+- **Estado emocional** com decay e memória emocional
+- **Necessidades psicológicas**: autonomia, competência, pertencimento (Self-Determination Theory)
+- **AgentBehaviorModifiers** + **CulturalInfluence**
 - **Metas** autônomas com prioridades
 - **Memória** curta (deque 10) e longa (deque 50)
 - **Conhecimento** (crenças verdadeiras/falsas)
@@ -242,6 +275,15 @@ Cada agente possui:
 - **Reputação** por agente
 - **Habilidades** aprendidas (limitadas a 10)
 - **Eventos de vida** (últimos 50)
+
+### Fórmula de Decisão
+
+```
+Decision = Temperament(0.25) + Emotions(0.20) + Needs(0.15)
+         + Experiences(0.15) + Culture(0.15) + Context(0.10)
+```
+
+Cada agente tem um `AgentArchetype` que define trait_modifiers, preferred_actions e preferred_goals. A personalidade evolui lentamente (mutate rate = 0.005/tick). Contradições internas podem surgir (6 pares, 15% de chance na criação).
 
 ### MoltbookAgent
 
@@ -257,6 +299,167 @@ Comportamento por tick:
 | Consume | 60% | Gasta recursos básicos |
 
 O MoltbookAgent usa `_INTEREST_PATTERN` (regex com 10+ categorias) para detectar temas relevantes e 9 respostas contextuais portadas do `compose_comment` original.
+
+---
+
+## Sistema de Personalidade
+
+A personalidade de cada agente é um sistema de 5 camadas que interagem para produzir decisões:
+
+### 1. Temperamento (11 traços)
+
+Cada traço tem distribuição normal independente (média 0, desvio 1):
+
+| Traço | Descrição |
+|-------|-----------|
+| Extraversion | Energia social, busca de estímulos |
+| Agreeableness | Cooperação, confiança nos outros |
+| Conscientiousness | Autodisciplina, organização |
+| Neuroticism | Instabilidade emocional, ansiedade |
+| Openness | Curiosidade intelectual, criatividade |
+| Honesty-Humility | Sinceridade, modéstia, justiça |
+| Assertiveness | Dominância social, liderança |
+| Compassion | Empatia, preocupação com o próximo |
+| Orderliness | Apego a regras, rotina, estrutura |
+| Volatility | Reatividade emocional, intensidade |
+| Withdrawal | Tendência a evitar conflito ou risco |
+
+Evolução: `mutate(rate=0.005)` por tick — mudanças lentas e realistas.
+
+### 2. Arquétipos (9 tipos)
+
+| Arquétipo | Traços elevados | Ações preferidas |
+|-----------|-----------------|------------------|
+| Sage | Openness, Conscientiousness | research, teaching |
+| Ruler | Assertiveness, Conscientiousness | govern, make_speech |
+| Warrior | Assertiveness, Volatility | patrol, military_action |
+| Caregiver | Compassion, Agreeableness | socializing, teaching |
+| Explorer | Openness, Extraversion | explore, research |
+| Creator | Openness, Conscientiousness | innovate, research |
+| Rebel | Volatility, Withdrawal (-) | protest, disrupt |
+| Lover | Extraversion, Compassion | socializing, relationship |
+| Jester | Extraversion, Openness | entertain, socialize |
+
+### 3. Memória Emocional
+
+Cada evento significativo gera um perfil emocional com 30+ tipos (war, discovery, betrayal, cultural_renaissance, etc.). Decay natural de 0.002/tick. As emoções de eventos recentes influenciam diretamente as decisões do agente.
+
+### 4. Necessidades Psicológicas (SDT)
+
+Três necessidades básicas que decaem com o tempo e são satisfeitas por ações:
+- **Autonomia**: satisfeita por liberdade de escolha, riqueza
+- **Competência**: satisfeita por trabalho, pesquisa, descobertas
+- **Pertencimento**: satisfeita por relacionamentos, socialização
+
+### 5. Influência Cultural
+
+A cultura dominante (religião, ideologia) molda as preferências do agente com peso 0.15 na decisão final.
+
+### Contradições
+
+Agentes podem ter contradições internas (ex: alta Honesty + alta Volatility = "impulso sincero"). 6 pares de traços antagônicos com 15% de chance de ativação na criação.
+
+---
+
+## Memória Coletiva
+
+A memória coletiva da civilização armazena narrativas compartilhadas que moldam a identidade cultural. Narrativas não são factuais — são **interpretações** do que aconteceu.
+
+### Tipos de Narrativa
+
+| Tipo | Origem | Função |
+|------|--------|--------|
+| **Foundational** | Eventos fundacionais, descobertas, religião | Base da tradição |
+| **Reformist** | Contranarrativa gerada em rebeliões | Mudança gradual |
+| **Revolutionary** | Contranarrativa radical (50% das rebeliões) | Ruptura completa |
+| **Myth** | Foundational após 3+ gerações com alta importância | Lenda, identidade sagrada |
+
+### Ciclo de Vida
+
+1. Evento significativo → memória coletiva (dominância inicial 0.3-0.7)
+2. Cada geração (20 ticks): memórias envelhecem, importância decai
+3. Se dominância média > 0.6: probabilidade de rebelião acumula
+4. Rebelião: narrativas dominantes são desafiadas, contranarrativas surgem
+5. Contranarrativas viram novas tradições → ciclo recomeça
+
+### Coortes Geracionais
+
+| Faixa | Idade | Viés de rebeldia |
+|-------|-------|-----------------|
+| Young | ≤30 ticks | 1.4× |
+| Adult | 31-100 | 0.8× |
+| Elder | 100+ | 0.3× |
+
+Jovens empurram mudança, velhos preservam. O viés é aplicado ao drift político de cada agente.
+
+### HistoricalVolatility
+
+Métrica composta de 5 componentes:
+
+| Componente | Peso | Descrição |
+|-----------|------|-----------|
+| rebellion_count | 0.25 | Frequência de rebeliões |
+| narrative_turnover | 0.25 | Proporção de reformist+revolutionary |
+| emotional_polarization | 0.20 | Variância emocional entre memórias |
+| myth_formation_rate | 0.15 | Taxa de formação de mitos |
+| dominance_oscillation | 0.15 | Oscilação da dominância recente |
+
+**Regimes**: estável (<0.15) → instável → revolucionária → decadente → fragmentada (≥0.60)
+
+---
+
+## NarrativeActor
+
+Narrativas não se espalham porque existem — espalham-se porque alguém as promove. Um ator com alta influência e carisma pode tornar dominante uma narrativa mediana; um ator isolado pode ter a melhor ideia da história e ninguém ouvir.
+
+### Classes de atores
+
+| Classe | Influência | Ideologia | Narrativa preferida |
+|--------|-----------|-----------|-------------------|
+| Governor | 0.7 | conservative | foundational (preserva instituições) |
+| Journalist | 0.5 | neutral | reformist (busca verdade) |
+| Philosopher | 0.6 | progressive | reformist (questiona) |
+| Researcher | 0.4 | progressive | reformist (inova) |
+| Military | 0.5 | conservative | foundational (defende ordem) |
+
+### Comportamento
+
+A cada tick, cada ator tem 15% de chance de agir:
+- **60% promover**: aumenta dominância + importância de narrativa alinhada à sua ideologia
+- **40% atacar**: reduz dominância + importância de narrativa contrária à sua ideologia
+
+Poder efetivo: `influence × charisma × (1 + log10(audience))`
+
+Um governador conservador promove narrativas foundational e ataca revolutionary. Um filósofo progressista promove reformist e ataca foundational.
+
+---
+
+## CivilizationIdentity
+
+A identidade cultural emerge automaticamente do estado atual do sistema — não é um label fixo, mas 6 dimensões contínuas (0-1) que podem ser observadas evoluindo ao longo dos ticks.
+
+### Dimensões
+
+| Dimensão | Fonte |
+|----------|-------|
+| **religiosity** | Memórias religiosas + espiritualidade emocional |
+| **militarism** | Eventos de guerra/conflito + agressividade |
+| **individualism** | Polarização emocional (alta = mais individualista) |
+| **traditionalism** | Proporção de narrativas foundational + myth |
+| **innovation** | Tecnologias descobertas + curiosidade coletiva |
+| **pluralism** | Diversidade de tipos narrativos ativos |
+
+### Divergência entre civilizações
+
+`CivilizationIdentity.divergence_report()` compara múltiplas identidades e mede divergência (std) em cada dimensão. Experimento com 5 seeds diferentes (42, 99, 123, 456, 777) após 500 ticks:
+
+```
+Avg divergence across all dims: 0.093
+Maior divergente: pluralism (std=0.245, range [0.5, 1.0])
+2 tendências emergindo: tradicionalista vs individualista
+```
+
+Com seeds suficientes, civilizações começam a trilhar trajetórias históricas divergentes a partir das mesmas regras fundamentais — validação forte do modelo.
 
 ---
 
@@ -353,9 +556,11 @@ Acesse `http://localhost:8000/dashboard` para um painel HTML interativo com feed
 | Subsistema | Arquivo principal | Descrição |
 |------------|------------------|-----------|
 | World | `pangeia/core/world.py` | Territórios, recursos, eventos naturais |
-| Agents | `pangeia/core/agent.py` | Classe base Agent, AgentState, Reputation |
+| Agents | `pangeia/core/agent.py` | Classe base Agent, AgentState, Reputation, Personalidade 5 camadas |
+| Psychology | `pangeia/core/psychology.py` | Temperamento (11 traços), 9 Arquétipos, Necessidades SDT, Memória Emocional |
 | Communication | `pangeia/core/communication.py` | Message, CommunicationSystem (broadcast, rumor) |
 | Memory | `pangeia/core/memory.py` | Deque com capacidade limitada |
+| CollectiveMemory | `pangeia/core/collective_memory.py` | 4 tipos narrativos, rebeliões, gerações, NarrativeActor, CivilizationIdentity, HistoricalVolatility |
 | Economy | `pangeia/economy/market.py` | Mercado, PIB, inflação, empresas |
 | Governance | `pangeia/governance/government.py` | Leis, eleições, estabilidade |
 | Culture | `pangeia/culture/` | Religiões, ideologias, memes, crenças |
@@ -389,6 +594,27 @@ Benchmark com 300 agentes, 100 ticks:
 - **Cache de researchable**: eliminou 8043 chamadas de `can_research()` por tick
 - **Deque para memória**: crescimento limitado em vez de linear
 - **Culture sampling**: K=5-10 targets aleatórios em vez de iterar todos os agentes (eliminou 10x degradação entre tick 10 e 100)
+
+### Resultados experimentais
+
+**Batalha cultural** (500 ticks, 30 agentes):
+- 875 memórias coletivas (334 foundational, 333 reformist, 168 revolutionary, 40 myths)
+- 1 rebelião, regime instável
+- 9 atores narrativos ativos (mais poderoso: governor com power=1.063)
+- Tendência dominante: individualista
+
+**Divergência entre civilizações** (5 seeds, 500 ticks):
+
+| Dimensão | Média | Desvio | Range |
+|----------|-------|--------|-------|
+| pluralism | 0.80 | 0.245 | [0.5, 1.0] |
+| traditionalism | 0.86 | 0.130 | [0.684, 1.0] |
+| religiosity | 0.188 | 0.082 | [0.081, 0.267] |
+| innovation | 0.405 | 0.064 | [0.312, 0.469] |
+| individualism | 0.98 | 0.024 | [0.95, 1.0] |
+| militarism | 0.694 | 0.013 | [0.677, 0.714] |
+
+2 tendências emergindo: **tradicionalista** (seeds 42, 99) vs **individualista** (seeds 123, 456, 777).
 
 ---
 
