@@ -1,0 +1,16 @@
+[project]
+name = "projeto-pangeia"
+version = "0.1.0"
+description = "Laboratório de civilizações artificiais"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.104.0",
+    "uvicorn[standard]>=0.24.0",
+    "pydantic>=2.5.0",
+    "numpy>=1.24.0",
+    "websockets>=12.0",
+]
+
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"

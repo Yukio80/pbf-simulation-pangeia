@@ -1,0 +1,38 @@
+         225015 function calls (222011 primitive calls) in 0.876 seconds
+
+   Ordered by: cumulative time
+   List reduced from 142 to 30 due to restriction <30>
+
+   ncalls  tottime  percall  cumtime  percall filename:lineno(function)
+       10    0.075    0.007    0.889    0.089 /root/Projeto Pangeia/pangeia/simulation.py:135(step)
+     3897    0.276    0.000    0.399    0.000 /root/Projeto Pangeia/pangeia/simulation.py:256(_process_action)
+     1650    0.023    0.000    0.125    0.000 /root/Projeto Pangeia/pangeia/agents/citizen.py:17(decide)
+     2280    0.019    0.000    0.113    0.000 /root/Projeto Pangeia/pangeia/core/agent.py:213(perceive)
+     2280    0.038    0.000    0.085    0.000 /root/Projeto Pangeia/pangeia/core/agent.py:151(as_dict)
+      463    0.025    0.000    0.060    0.000 /usr/lib/python3.12/random.py:359(sample)
+       10    0.010    0.001    0.045    0.005 /root/Projeto Pangeia/pangeia/metrics/tracker.py:46(record)
+    16320    0.040    0.000    0.040    0.000 {built-in method builtins.round}
+     1758    0.022    0.000    0.038    0.000 /root/Projeto Pangeia/pangeia/core/memory.py:29(remember)
+ 3105/105    0.024    0.000    0.035    0.000 {built-in method builtins.sum}
+      461    0.007    0.000    0.034    0.000 /root/Projeto Pangeia/pangeia/core/agent.py:258(communicate)
+      290    0.009    0.000    0.029    0.000 /root/Projeto Pangeia/pangeia/agents/researcher.py:20(decide)
+       10    0.000    0.000    0.028    0.003 /root/Projeto Pangeia/pangeia/simulation.py:343(_update_economy)
+       10    0.014    0.001    0.028    0.003 /root/Projeto Pangeia/pangeia/economy/market.py:39(step)
+     3010    0.004    0.000    0.026    0.000 /root/Projeto Pangeia/pangeia/metrics/tracker.py:60(<genexpr>)
+     6859    0.015    0.000    0.025    0.000 /usr/lib/python3.12/random.py:242(_randbelow_with_getrandbits)
+      360    0.003    0.000    0.024    0.000 /root/Projeto Pangeia/pangeia/agents/entrepreneur.py:18(decide)
+      250    0.007    0.000    0.021    0.000 /root/Projeto Pangeia/pangeia/agents/journalist.py:19(decide)
+     2602    0.014    0.000    0.019    0.000 /root/Projeto Pangeia/pangeia/core/agent.py:225(consume_resources)
+    16586    0.019    0.000    0.019    0.000 {built-in method builtins.max}
+      120    0.007    0.000    0.018    0.000 /root/Projeto Pangeia/pangeia/agents/governor.py:20(decide)
+      150    0.004    0.000    0.017    0.000 /root/Projeto Pangeia/pangeia/agents/military.py:20(decide)
+     3296    0.011    0.000    0.016    0.000 /usr/lib/python3.12/random.py:551(gauss)
+    26149    0.014    0.000    0.014    0.000 {method 'random' of '_random.Random' objects}
+     3989    0.009    0.000    0.014    0.000 /root/Projeto Pangeia/pangeia/core/agent.py:245(work)
+       10    0.010    0.001    0.014    0.001 /root/Projeto Pangeia/pangeia/society/stratification.py:42(assign_classes)
+       10    0.009    0.001    0.013    0.001 /root/Projeto Pangeia/pangeia/culture/ideologies.py:40(step)
+     1887    0.005    0.000    0.013    0.000 /usr/lib/python3.12/random.py:341(choice)
+     9878    0.011    0.000    0.011    0.000 {method 'startswith' of 'str' objects}
+    10651    0.011    0.000    0.011    0.000 {built-in method builtins.min}
+
+

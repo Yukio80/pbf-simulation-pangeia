@@ -1,0 +1,38 @@
+         613363 function calls (611863 primitive calls) in 1.065 seconds
+
+   Ordered by: cumulative time
+   List reduced from 122 to 30 due to restriction <30>
+
+   ncalls  tottime  percall  cumtime  percall filename:lineno(function)
+        5    0.096    0.019    1.066    0.213 /root/Projeto Pangeia/pangeia/simulation.py:135(step)
+        5    0.051    0.010    0.380    0.076 /root/Projeto Pangeia/pangeia/culture/religion.py:81(step)
+    13044    0.126    0.000    0.341    0.000 /usr/lib/python3.12/random.py:359(sample)
+        5    0.159    0.032    0.220    0.044 /root/Projeto Pangeia/pangeia/culture/ideologies.py:40(step)
+     1879    0.119    0.000    0.179    0.000 /root/Projeto Pangeia/pangeia/simulation.py:256(_process_action)
+    67994    0.098    0.000    0.158    0.000 /usr/lib/python3.12/random.py:242(_randbelow_with_getrandbits)
+      825    0.009    0.000    0.071    0.000 /root/Projeto Pangeia/pangeia/agents/citizen.py:17(decide)
+     1140    0.009    0.000    0.070    0.000 /root/Projeto Pangeia/pangeia/core/agent.py:213(perceive)
+   129080    0.063    0.000    0.063    0.000 {method 'random' of '_random.Random' objects}
+     1140    0.017    0.000    0.057    0.000 /root/Projeto Pangeia/pangeia/core/agent.py:151(as_dict)
+    13044    0.014    0.000    0.032    0.000 {built-in method builtins.isinstance}
+   115714    0.032    0.000    0.032    0.000 {method 'getrandbits' of '_random.Random' objects}
+    67994    0.027    0.000    0.027    0.000 {method 'bit_length' of 'int' objects}
+    66580    0.024    0.000    0.024    0.000 {method 'add' of 'set' objects}
+     1140    0.021    0.000    0.021    0.000 /root/Projeto Pangeia/pangeia/core/agent.py:119(get_friends)
+        5    0.003    0.001    0.021    0.004 /root/Projeto Pangeia/pangeia/metrics/tracker.py:46(record)
+     1017    0.012    0.000    0.019    0.000 /root/Projeto Pangeia/pangeia/core/memory.py:29(remember)
+    24045    0.019    0.000    0.019    0.000 {built-in method builtins.max}
+    13044    0.008    0.000    0.018    0.000 <frozen abc>:117(__instancecheck__)
+  1545/45    0.013    0.000    0.018    0.000 {built-in method builtins.sum}
+      247    0.004    0.000    0.017    0.000 /root/Projeto Pangeia/pangeia/core/agent.py:258(communicate)
+     8160    0.017    0.000    0.017    0.000 {built-in method builtins.round}
+     1505    0.002    0.000    0.014    0.000 /root/Projeto Pangeia/pangeia/metrics/tracker.py:60(<genexpr>)
+      180    0.001    0.000    0.011    0.000 /root/Projeto Pangeia/pangeia/agents/entrepreneur.py:18(decide)
+     1745    0.007    0.000    0.011    0.000 /usr/lib/python3.12/random.py:551(gauss)
+    13044    0.011    0.000    0.011    0.000 {built-in method _abc._abc_instancecheck}
+      125    0.003    0.000    0.010    0.000 /root/Projeto Pangeia/pangeia/agents/journalist.py:19(decide)
+    20796    0.009    0.000    0.009    0.000 {built-in method builtins.len}
+       60    0.002    0.000    0.008    0.000 /root/Projeto Pangeia/pangeia/agents/governor.py:20(decide)
+       75    0.002    0.000    0.008    0.000 /root/Projeto Pangeia/pangeia/agents/military.py:20(decide)
+
+

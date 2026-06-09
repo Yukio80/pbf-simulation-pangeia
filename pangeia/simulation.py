@@ -1,0 +1,473 @@
+from __future__ import annotations
+
+import random
+from typing import Dict, Optional
+
+from pangeia.config import SimulationConfig
+from pangeia.core.world import World
+from pangeia.core.agent import Agent, ReputationEntry
+from pangeia.core.communication import CommunicationSystem, Message
+from pangeia.agents import AGENT_CLASSES
+from pangeia.economy.market import Economy
+from pangeia.governance.government import GovernanceSystem
+from pangeia.governance.laws import LawSystem
+from pangeia.governance.elections import ElectionSystem
+from pangeia.culture.beliefs import BeliefSystem
+from pangeia.culture.memes import MemePool
+from pangeia.culture.religion import ReligiousSystem
+from pangeia.culture.ideologies import IdeologySystem
+from pangeia.diplomacy.diplomacy import DiplomacySystem
+from pangeia.society.stratification import StratificationSystem
+from pangeia.history.narratives import NarrativeSystem
+from pangeia.events.random_events import EventSystem
+from pangeia.metrics.tracker import MetricsTracker
+from pangeia.technology.tech_tree import TechnologySystem
+from pangeia.external_agents.protocol import PAPProtocol
+from pangeia.external_agents.icarus_gateway import IcarusGateway
+from pangeia.news.newsroom import NewsRoom
+from pangeia.persistence import AuditRecorder, AuditLog, InMemoryAuditLog, PersistenceBackend
+
+
+class Simulation:
+    def __init__(self, config: Optional[SimulationConfig] = None,
+                 audit_log: Optional[AuditLog] = None):
+        self.config = config or SimulationConfig.default()
+        random.seed(self.config.world.seed)
+        self.rng = random.Random(self.config.world.seed)
+
+        self.world = World(self.config)
+        self.communication = CommunicationSystem()
+        self.agents: Dict[str, Agent] = {}
+
+        self.economy = Economy(self.config)
+        self.governance = GovernanceSystem(self.config)
+        self.law_system = LawSystem()
+        self.election_system = ElectionSystem()
+
+        self.belief_system = BeliefSystem()
+        self.meme_pool = MemePool()
+        self.religion_system = ReligiousSystem(rng=self.rng)
+        self.ideology_system = IdeologySystem(rng=self.rng)
+
+        self.diplomacy = DiplomacySystem(rng=self.rng)
+        self.stratification = StratificationSystem()
+        self.narratives = NarrativeSystem(rng=self.rng)
+
+        self.technology = TechnologySystem(rng=self.rng)
+        self.pap = PAPProtocol(rng=self.rng)
+
+        self.event_system = EventSystem(self.rng)
+        self.metrics = MetricsTracker()
+        self.newsroom = NewsRoom(rng=self.rng)
+        self.icarus: Optional[IcarusGateway] = None
+
+        self._setup_audit_log(audit_log)
+        self._initialize_population()
+        self._initialize_stratification()
+
+    def _setup_audit_log(self, audit_log: Optional[AuditLog] = None):
+        persistence = self.config.persistence
+        if audit_log:
+            store = audit_log
+        elif persistence.backend == PersistenceBackend.POSTGRES and persistence.dsn:
+            from pangeia.persistence.postgres_store import PostgresAuditLog
+            store = PostgresAuditLog(persistence.dsn)
+        else:
+            store = InMemoryAuditLog()
+        self.audit_log = store
+        self.audit_recorder = AuditRecorder(store, enabled=True)
+
+    def _initialize_population(self):
+        n = self.config.world.initial_population
+        class_distribution = {
+            "citizen": 0.45,
+            "entrepreneur": 0.14,
+            "researcher": 0.09,
+            "governor": 0.04,
+            "journalist": 0.06,
+            "military": 0.07,
+            "philosopher": 0.05,
+            "moltbook": 0.10,
+        }
+
+        classes = list(class_distribution.keys())
+        weights = list(class_distribution.values())
+
+        agent_ids = []
+        for i in range(n):
+            agent_class = self.rng.choices(classes, weights=weights, k=1)[0]
+            agent_cls = AGENT_CLASSES[agent_class]
+            agent = agent_cls(self.config, rng=random.Random(self.rng.randint(0, 2**32)))
+            agent.state.territory_id = self.rng.choice(self.world.state.territories).id
+            self.agents[agent.agent_id] = agent
+            self.governance.register_voter(agent.agent_id)
+            agent_ids.append(agent.agent_id)
+
+        for i, aid in enumerate(agent_ids):
+            agent = self.agents[aid]
+            self.audit_recorder.record_agent_created(
+                0, agent.agent_id, agent.state.name,
+                agent.state.agent_class, agent.state.territory_id or 0,
+                personality=agent.personality.as_dict(),
+            )
+            for j in range(min(3, len(agent_ids) // 10)):
+                other_id = self.rng.choice([x for x in agent_ids if x != aid])
+                agent.social.add_relationship(
+                    other_id, trust=self.rng.uniform(0.3, 0.7),
+                    influence=self.rng.uniform(0.2, 0.5),
+                )
+            agent.knowledge.add_belief(
+                "The world of Pangeia is vast and full of opportunity",
+                0.7, "experience", "culture",
+            )
+
+        for agent in self.agents.values():
+            if agent.state.agent_class == "entrepreneur" and self.rng.random() < 0.3:
+                industry = self.rng.choice(["tech", "manufacturing", "services", "agriculture"])
+                company = self.economy.register_company(agent, industry)
+                if company:
+                    for _ in range(self.rng.randint(1, 5)):
+                        candidates = [a for a in self.agents.values()
+                                      if a.state.agent_class == "citizen" and not a.state.employer_id]
+                        if candidates:
+                            employee = self.rng.choice(candidates)
+                            company.hire(employee.agent_id)
+                            employee.state.employer_id = company.id
+
+    def _initialize_stratification(self):
+        self.stratification.assign_classes(self.agents)
+
+    def step(self):
+        tick = self.world.state.tick
+
+        self.world.regenerate()
+
+        alive_ids = [a for a in self.agents.values() if a.state.is_alive]
+        self._expensive_cache = {
+            'economy_summary': self.economy.summary(),
+            'governance_summary': self.governance.summary(),
+            'resources': self.world.state.global_resources.as_dict(),
+        }
+        if self.technology:
+            self.technology._researchable_cache = None
+
+        for agent in list(self.agents.values()):
+            if not agent.state.is_alive:
+                continue
+            try:
+                actions = agent.decide(self)
+                for action in actions:
+                    self._process_action(agent, action, tick)
+                    if action.startswith("discovered:"):
+                        agent.state.add_life_event(
+                            tick, "discovery", action[11:], 0.8
+                        )
+                        agent.state.notable_achievements.append(action[11:])
+                    elif action.startswith("idea:"):
+                        agent.state.add_life_event(
+                            tick, "idea", action[5:], 0.6
+                        )
+                    elif action == "starting_company":
+                        agent.state.add_life_event(
+                            tick, "business", "Started a company", 0.6
+                        )
+                    elif action == "make_speech":
+                        agent.state.add_life_event(
+                            tick, "speech", "Made a public speech", 0.4
+                        )
+            except Exception as e:
+                agent.memory.remember(
+                    f"Error during decision: {str(e)}",
+                    memory_type="error",
+                    importance=0.3,
+                )
+
+        self._update_economy()
+        self.governance.step(self.agents, tick)
+        self.event_system.step(self)
+        self.belief_system.evolve()
+        self.meme_pool.spread(self.agents)
+        self.religion_system.step(self.agents)
+        self.ideology_system.step(self.agents, tick)
+        self.technology.step(self)
+        self.diplomacy.step(self)
+        self.stratification.assign_classes(self.agents)
+        self.stratification.track_mobility()
+
+        self._record_narratives_for_events()
+
+        for agent in self.agents.values():
+            if not agent.state.is_alive:
+                continue
+            agent.state.political_alignment += self.rng.gauss(0, 0.005)
+            agent.state.political_alignment = max(-1.0, min(1.0, agent.state.political_alignment))
+            if agent.state.wealth > 500:
+                agent.state.political_alignment += 0.01
+            elif agent.state.wealth < 20:
+                agent.state.political_alignment -= 0.01
+            agent.state.political_alignment = max(-1.0, min(1.0, agent.state.political_alignment))
+
+            for other_id, rel in agent.social.relationships.items():
+                if other_id in agent.state.reputation:
+                    entry = agent.state.reputation[other_id]
+                    entry.last_interaction += 1
+                    entry.trust = rel.trust * 0.7 + entry.trust * 0.3
+                    entry.respect = max(entry.respect, agent.state.influence * 0.3)
+
+        self._age_agents()
+        self._record_world_events()
+        self._cleanup_dead()
+        if tick % 10 == 0:
+            for agent in self.agents.values():
+                agent.state.trim_reputation(20)
+                if len(agent.skills) > 10:
+                    agent.skills = dict(sorted(
+                        agent.skills.items(), key=lambda x: x[1], reverse=True
+                    )[:10])
+
+        snapshot = self.metrics.record(self)
+        self.newsroom.tick(self)
+        if self.icarus:
+            self.icarus.observe(self)
+            self.icarus.decide(self)
+        self.audit_recorder.record_tick(self.world.state.tick, snapshot.as_dict())
+        self.audit_recorder.flush()
+        self.world.state.advance_time(1.0)
+
+        return snapshot
+
+    def _record_world_events(self):
+        if not hasattr(self, '_last_recorded_event_idx'):
+            self._last_recorded_event_idx = 0
+        events = self.world.state.events
+        for i in range(self._last_recorded_event_idx, len(events)):
+            ev = events[i]
+            self.audit_recorder.record_world_event(
+                ev.get("tick", self.world.state.tick),
+                ev.get("type", "unknown"),
+                ev.get("description", ""),
+                ev.get("data", {}),
+            )
+        self._last_recorded_event_idx = len(events)
+
+    def _record_narratives_for_events(self):
+        if not hasattr(self, '_last_narrated_ids'):
+            self._last_narrated_ids = set()
+        for event in self.world.state.events[-5:]:
+            event_id = (event.get("tick", 0), event.get("type", ""), event.get("description", ""))
+            if event_id not in self._last_narrated_ids:
+                self.narratives.record_event(event)
+                self.narratives.generate_narratives(event, self.agents, event.get("tick", 0))
+                self._last_narrated_ids.add(event_id)
+        if len(self._last_narrated_ids) > 200:
+            self._last_narrated_ids = set(list(self._last_narrated_ids)[-100:])
+
+    def _process_action(self, agent: Agent, action: str, tick: int):
+        if action == "working":
+            output = agent.work()
+            agent.state.wealth += output * 0.5
+        elif action == "researching":
+            agent.work(1.5)
+            self.economy.indicators.tech_level = min(
+                1.0, self.economy.indicators.tech_level + 0.0001
+            )
+        elif action == "starting_company":
+            if agent.state.wealth >= self.config.economy.company_startup_cost:
+                industry = self.rng.choice(["tech", "manufacturing", "services", "agriculture"])
+                company = self.economy.register_company(agent, industry)
+                if company:
+                    agent.state.employer_id = company.id
+        elif action == "socializing":
+            others = [a for a in self.agents.values()
+                      if a.agent_id != agent.agent_id and a.state.is_alive]
+            if others and self.rng.random() < 0.5:
+                others = self.rng.sample(others, min(10, len(others)))
+                other = self.rng.choice(others)
+                topic = self.rng.choice(["resources", "politics", "economy", "philosophy"])
+                agent.communicate(other, f"Discussing {topic}", 0.3)
+                agent.social.add_relationship(other.agent_id)
+                if self.rng.random() < 0.3:
+                    agent.state.add_personal_relation(
+                        other.agent_id, "friend", self.rng.uniform(0.3, 0.7),
+                        f"Bonded over {topic}", tick,
+                    )
+                    other.state.add_personal_relation(
+                        agent.agent_id, "friend", self.rng.uniform(0.3, 0.7),
+                        f"Bonded over {topic}", tick,
+                    )
+                if other.agent_id not in agent.state.reputation:
+                    agent.state.reputation[other.agent_id] = ReputationEntry(
+                        agent_id=other.agent_id,
+                        trust=self.rng.uniform(0.3, 0.6),
+                        respect=self.rng.uniform(0.2, 0.5),
+                        fear=0.0,
+                    )
+        elif action == "learning":
+            topics = ["technology", "economy", "politics", "culture", "science"]
+            topic = self.rng.choice(topics)
+            agent.learn(topic, 0.01)
+        elif action == "consuming":
+            agent.state.wealth -= 2.0
+        elif action == "make_speech":
+            theme = self.rng.choice(["unity", "progress", "security", "prosperity"])
+            speech = f"Citizens of Pangeia, we must focus on {theme}!"
+            msg = Message(
+                sender_id=agent.agent_id,
+                content=speech,
+                message_type="media",
+                truth_value=True,
+            )
+            self.communication.broadcast(msg, self.agents)
+        elif action.startswith("discovered:"):
+            pass
+        elif action == "contemplating":
+            if self.rng.random() < 0.05:
+                myth = self.belief_system.generate_myth(self.rng)
+                agent.knowledge.add_belief(
+                    myth, 0.8, agent.agent_id, "mythology"
+                )
+        elif action.startswith("idea:"):
+            pass
+        elif action.startswith("published:"):
+            pass
+        elif action == "patrolling":
+            agent.state.energy -= 1.0
+        elif action == "protecting_resources":
+            agent.state.energy -= 1.5
+        elif action == "seeking_job":
+            for company in self.economy.companies.values():
+                if len(company.employees) < 10:
+                    company.hire(agent.agent_id)
+                    agent.state.employer_id = company.id
+                    break
+        elif action == "investigating":
+            recent_events = self.world.state.events[-3:] if self.world.state.events else []
+            if recent_events:
+                event = self.rng.choice(recent_events)
+                agent.knowledge.add_belief(
+                    f"Investigated: {event['description']}",
+                    0.6, agent.agent_id, "investigation"
+                )
+
+    def _update_economy(self):
+        self.economy.step(self)
+
+    def _age_agents(self):
+        for agent in self.agents.values():
+            if agent.state.is_alive:
+                agent.state.age += 1
+                if agent.state.age in (10, 50, 100, 200, 500):
+                    agent.state.add_life_event(
+                        agent.state.age, "milestone",
+                        f"Reached age {agent.state.age}", 0.4,
+                    )
+                if agent.state.wealth > 1000 and "amassed_fortune" not in agent.state.notable_achievements:
+                    agent.state.notable_achievements.append("amassed_fortune")
+                    agent.state.add_life_event(
+                        self.world.state.tick, "wealth",
+                        "Amassed a fortune", 0.7,
+                    )
+                if agent.state.influence > 0.8 and "became_influential" not in agent.state.notable_achievements:
+                    agent.state.notable_achievements.append("became_influential")
+                    agent.state.add_life_event(
+                        self.world.state.tick, "influence",
+                        "Became highly influential", 0.7,
+                    )
+                if agent.state.age > 500 and self.rng.random() < 0.01:
+                    agent.state.is_alive = False
+                    self.audit_recorder.record_agent_died(
+                        self.world.state.tick, agent.agent_id,
+                        agent.state.name, agent.state.agent_class,
+                        agent.state.age, agent.state.wealth,
+                    )
+                    self.world.log_event(
+                        "death",
+                        f"{agent.state.name} ({agent.state.agent_class}) has died at age {agent.state.age}.",
+                        {"agent_id": agent.agent_id},
+                    )
+
+    def _cleanup_dead(self):
+        pass
+
+    def get_agent(self, agent_id: str) -> Optional[Agent]:
+        return self.agents.get(agent_id)
+
+    def summary(self) -> dict:
+        return {
+            "world": self.world.summary(),
+            "economy": self.economy.summary(),
+            "governance": self.governance.summary(),
+            "metrics": self.metrics.summary(),
+            "culture": {
+                "beliefs": self.belief_system.summary(),
+                "memes": self.meme_pool.summarize(),
+                "religion": self.religion_system.summary(),
+                "ideologies": self.ideology_system.summary(),
+            },
+            "technology": self.technology.summary(),
+            "diplomacy": self.diplomacy.summary(),
+            "stratification": self.stratification.summary(),
+            "history": self.narratives.summary(),
+            "events": self.event_system.summary(),
+            "agents": {
+                "total": len(self.agents),
+                "alive": sum(1 for a in self.agents.values() if a.state.is_alive),
+                "by_class": self._agent_class_distribution(),
+            },
+            "external_agents": self.pap.summary(),
+            "civilization": self.civilization_index(),
+        }
+
+    def _agent_class_distribution(self) -> dict:
+        dist = {}
+        for agent in self.agents.values():
+            cls = agent.state.agent_class
+            dist[cls] = dist.get(cls, 0) + 1
+        return dist
+
+    def civilization_index(self) -> dict:
+        alive = [a for a in self.agents.values() if a.state.is_alive]
+        total = len(self.agents)
+
+        avg_education = sum(a.state.education_level for a in alive) / max(1, len(alive))
+        avg_wealth = sum(a.state.wealth for a in alive) / max(1, len(alive))
+        avg_happiness = sum(a.emotions.happiness for a in alive) / max(1, len(alive))
+
+        tech = self.technology.get_tech_level() if self.technology else 0.3
+        stability = self.governance.government.stability if self.governance else 0.5
+        ineq = self.economy.indicators.inequality if self.economy else 0.5
+        religious_count = sum(
+            len(r.followers) for r in self.religion_system.religions.values()
+        ) if self.religion_system else 0
+        ideology_count = len(self.ideology_system.ideologies) if self.ideology_system else 0
+
+        cultural_complexity = min(1.0, (
+            len(self.belief_system.values) * 0.1 +
+            len(self.meme_pool.memes) * 0.05 +
+            len(self.religion_system.religions) * 0.15 +
+            ideology_count * 0.1 +
+            len(self.narratives.narratives) * 0.05 +
+            self.technology.get_tech_level() * 0.2
+        ) / 5.0)
+
+        institutions = stability * 0.5 + self.governance.government.legitimacy * 0.3 + 0.2
+
+        age_name = self.technology.get_era().title() if self.technology else "Primordial"
+
+        return {
+            "age": age_name,
+            "population": len(alive),
+            "technology": round(tech, 3),
+            "stability": round(stability, 3),
+            "culture_complexity": round(cultural_complexity, 3),
+            "institutional_maturity": round(institutions, 3),
+            "avg_education": round(avg_education, 3),
+            "avg_wealth": round(avg_wealth, 2),
+            "avg_happiness": round(avg_happiness, 3),
+            "inequality": round(ineq, 3),
+            "religions": len(self.religion_system.religions),
+            "ideologies": ideology_count,
+            "factions": len(self.diplomacy.factions),
+            "technologies_discovered": self.technology.summary().get("discovered", 0) if self.technology else 0,
+            "external_agents": len(self.pap.external_agents) if self.pap else 0,
+        }

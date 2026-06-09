@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Pangeia News Dashboard</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'Segoe UI', system-ui, sans-serif; background: #0a0e17; color: #e0e6f0; min-height: 100vh; }
+  .header { background: linear-gradient(135deg, #0f1923 0%, #1a2a3a 100%); border-bottom: 1px solid #2a3a4a; padding: 16px 24px; display: flex; align-items: center; gap: 16px; }
+  .header h1 { font-size: 20px; font-weight: 700; background: linear-gradient(90deg, #4fc3f7, #81c784); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+  .header .ticker { flex: 1; margin-left: 24px; overflow: hidden; white-space: nowrap; }
+  .header .ticker span { display: inline-block; animation: scroll 30s linear infinite; color: #90a4ae; font-size: 14px; }
+  .header .ticker span:hover { animation-play-state: paused; }
+  @keyframes scroll { 0% { transform: translateX(100%); } 100% { transform: translateX(-100%); } }
+  .header .status { font-size: 12px; color: #78909c; }
+  .header .status .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; }
+  .dot.green { background: #4caf50; }
+  .dot.red { background: #f44336; }
+  .dot.yellow { background: #ff9800; }
+
+  .container { display: flex; gap: 20px; padding: 20px; max-width: 1440px; margin: 0 auto; }
+  .main { flex: 1; min-width: 0; }
+  .sidebar { width: 320px; flex-shrink: 0; }
+
+  .filters { display: flex; gap: 8px; margin-bottom: 16px; flex-wrap: wrap; }
+  .filters button { padding: 6px 14px; border: 1px solid #2a3a4a; border-radius: 20px; background: transparent; color: #90a4ae; cursor: pointer; font-size: 13px; transition: all .2s; }
+  .filters button:hover { border-color: #4fc3f7; color: #e0e6f0; }
+  .filters button.active { background: #1a3a5a; border-color: #4fc3f7; color: #4fc3f7; }
+
+  .news-card { background: #111b27; border: 1px solid #1e2e3e; border-radius: 10px; padding: 16px; margin-bottom: 12px; transition: opacity .3s; }
+  .news-card:hover { border-color: #2a4a6a; }
+  .news-card .meta { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; font-size: 12px; }
+  .news-card .category { padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 600; text-transform: uppercase; }
+  .cat-economy { background: #1b3a2a; color: #81c784; }
+  .cat-technology { background: #1a2a4a; color: #64b5f6; }
+  .cat-culture { background: #3a1a3a; color: #ce93d8; }
+  .cat-society { background: #3a2a1a; color: #ffb74d; }
+  .cat-science { background: #1a3a3a; color: #4dd0e1; }
+  .cat-digest { background: #2a2a2a; color: #b0bec5; }
+  .severity-breaking { border-left: 3px solid #f44336; }
+  .severity-major { border-left: 3px solid #ff9800; }
+  .severity-minor { border-left: 3px solid #4caf50; }
+  .severity-badge { font-size: 10px; padding: 1px 6px; border-radius: 3px; }
+  .sev-breaking { background: #f44336; color: #fff; }
+  .sev-major { background: #ff9800; color: #000; }
+  .sev-minor { background: #4caf50; color: #fff; }
+  .news-card h3 { font-size: 15px; margin-bottom: 4px; color: #e0e6f0; }
+  .news-card p { font-size: 13px; color: #78909c; line-height: 1.5; }
+  .news-card .tick { color: #546e7a; font-size: 11px; }
+
+  .sidebar .panel { background: #111b27; border: 1px solid #1e2e3e; border-radius: 10px; padding: 16px; margin-bottom: 16px; }
+  .sidebar .panel h3 { font-size: 14px; color: #90a4ae; margin-bottom: 12px; text-transform: uppercase; letter-spacing: 1px; }
+  .sidebar .metric { display: flex; justify-content: space-between; padding: 4px 0; font-size: 13px; }
+  .sidebar .metric .label { color: #78909c; }
+  .sidebar .metric .value { color: #e0e6f0; font-weight: 600; }
+  .sidebar .bar { height: 4px; background: #1e2e3e; border-radius: 2px; margin-top: 2px; }
+  .sidebar .bar-fill { height: 100%; border-radius: 2px; transition: width .5s; }
+
+  #loading { text-align: center; padding: 40px; color: #546e7a; }
+  .error-msg { color: #f44336; text-align: center; padding: 20px; }
+
+  @media (max-width: 768px) { .container { flex-direction: column; } .sidebar { width: 100%; } }
+</style>
+</head>
+<body>
+<div class="header">
+  <h1>Pangeia News</h1>
+  <div class="status"><span class="dot green" id="statusDot"></span><span id="statusText">Connecting...</span></div>
+  <div class="ticker"><span id="ticker"></span></div>
+</div>
+
+<div class="container">
+  <div class="main">
+    <div class="filters" id="filters">
+      <button class="active" data-cat="">All</button>
+      <button data-cat="economy">Economy</button>
+      <button data-cat="technology">Technology</button>
+      <button data-cat="culture">Culture</button>
+      <button data-cat="society">Society</button>
+      <button data-cat="science">Science</button>
+      <button data-cat="digest">Digest</button>
+    </div>
+    <div id="newsFeed"></div>
+  </div>
+  <div class="sidebar">
+    <div class="panel" id="metricsPanel">
+      <h3>Metrics</h3>
+      <div id="metricsContent">Loading...</div>
+    </div>
+    <div class="panel" id="summaryPanel">
+      <h3>News Stats</h3>
+      <div id="summaryContent">Loading...</div>
+    </div>
+  </div>
+</div>
+
+<script>
+const wsProto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+const wsUrl = `${wsProto}//${location.host}/ws`;
+let articles = [];
+let filteredArticles = [];
+let ws = null;
+let currentCat = '';
+let pollTimer = null;
+
+function connectWs() {
+  ws = new WebSocket(wsUrl);
+  ws.onopen = () => {
+    document.getElementById('statusDot').className = 'dot green';
+    document.getElementById('statusText').textContent = 'Live';
+  };
+  ws.onmessage = (e) => {
+    try {
+      const data = JSON.parse(e.data);
+      if (data.type === 'tick') {
+        updateMetrics(data.metrics);
+        updateTicker(data.headlines || []);
+        if (data.headlines && data.headlines.length > 0) {
+          fetchNews();
+        }
+      }
+    } catch (err) {}
+  };
+  ws.onclose = () => {
+    document.getElementById('statusDot').className = 'dot yellow';
+    document.getElementById('statusText').textContent = 'Reconnecting...';
+    setTimeout(connectWs, 2000);
+  };
+  ws.onerror = () => ws.close();
+}
+
+async function fetchNews() {
+  try {
+    const params = new URLSearchParams({ limit: '50', offset: '0' });
+    const res = await fetch(`/news?${params}`);
+    const data = await res.json();
+    articles = data.articles || [];
+    render();
+  } catch (err) {
+    document.getElementById('newsFeed').innerHTML = '<div class="error-msg">Failed to load news</div>';
+  }
+}
+
+async function fetchMetrics() {
+  try {
+    const res = await fetch('/metrics');
+    const data = await res.json();
+    updateMetrics(data.current);
+  } catch (err) {}
+}
+
+async function fetchSummary() {
+  try {
+    const res = await fetch('/news?limit=1');
+    const data = await res.json();
+    const res2 = await fetch('/audit/stats');
+    const stats = await res2.json();
+    document.getElementById('summaryContent').innerHTML = `
+      <div class="metric"><span class="label">Articles</span><span class="value">${data.total || 0}</span></div>
+      <div class="metric"><span class="label">Audit Events</span><span class="value">${stats.total_events || 0}</span></div>
+    `;
+  } catch (err) {}
+}
+
+function updateMetrics(m) {
+  if (!m) return;
+  const html = `
+    <div class="metric"><span class="label">Tick</span><span class="value">${m.tick}</span></div>
+    <div class="metric"><span class="label">Population</span><span class="value">${m.alive}/${m.population}</span></div>
+    <div class="metric"><span class="label">Cooperation</span><span class="value">${(m.cooperation*100).toFixed(1)}%</span></div>
+    <div class="bar"><div class="bar-fill" style="width:${m.cooperation*100}%;background:#4fc3f7"></div></div>
+    <div class="metric"><span class="label">Happiness</span><span class="value">${(m.collective_happiness*100).toFixed(1)}%</span></div>
+    <div class="bar"><div class="bar-fill" style="width:${m.collective_happiness*100}%;background:#81c784"></div></div>
+    <div class="metric"><span class="label">Stability</span><span class="value">${(m.stability*100).toFixed(1)}%</span></div>
+    <div class="bar"><div class="bar-fill" style="width:${m.stability*100}%;background:#ffb74d"></div></div>
+    <div class="metric"><span class="label">Innovation</span><span class="value">${(m.innovation*100).toFixed(1)}%</span></div>
+    <div class="bar"><div class="bar-fill" style="width:${m.innovation*100}%;background:#ce93d8"></div></div>
+    <div class="metric"><span class="label">Polarization</span><span class="value">${(m.polarization*100).toFixed(1)}%</span></div>
+  `;
+  document.getElementById('metricsContent').innerHTML = html;
+}
+
+function updateTicker(headlines) {
+  if (!headlines || headlines.length === 0) return;
+  const ticker = document.getElementById('ticker');
+  const texts = headlines.map(h => `[${h.category.toUpperCase()}] ${h.headline}`).join('  •  ');
+  ticker.textContent = texts + '  •  ';
+}
+
+function render() {
+  filteredArticles = currentCat ? articles.filter(a => a.category === currentCat) : articles;
+  filteredArticles = filteredArticles.slice().reverse();
+  const feed = document.getElementById('newsFeed');
+  if (filteredArticles.length === 0) {
+    feed.innerHTML = '<div style="text-align:center;padding:40px;color:#546e7a;">No news yet. Start the simulation to see headlines.</div>';
+    return;
+  }
+  feed.innerHTML = filteredArticles.map(a => {
+    const catClass = `cat-${a.category}`;
+    const sevClass = `severity-${a.severity}`;
+    const sevBadge = a.severity !== 'minor' ? `<span class="severity-badge sev-${a.severity}">${a.severity}</span>` : '';
+    return `<div class="news-card ${sevClass}">
+      <div class="meta">
+        <span class="category ${catClass}">${a.category}</span>
+        ${sevBadge}
+        <span class="tick">tick ${a.tick}</span>
+      </div>
+      <h3>${a.headline}</h3>
+      <p>${a.summary}</p>
+    </div>`;
+  }).join('');
+}
+
+document.getElementById('filters').addEventListener('click', (e) => {
+  if (e.target.tagName !== 'BUTTON') return;
+  document.querySelectorAll('#filters button').forEach(b => b.classList.remove('active'));
+  e.target.classList.add('active');
+  currentCat = e.target.dataset.cat;
+  render();
+});
+
+connectWs();
+fetchNews();
+fetchMetrics();
+fetchSummary();
+pollTimer = setInterval(() => {
+  fetchNews();
+  fetchMetrics();
+}, 3000);
+</script>
+</body>
+</html>
