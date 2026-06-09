@@ -1,5 +1,6 @@
 from dataclasses import dataclass, field
-from typing import Optional
+from enum import Enum
+from typing import Any, Dict, Optional
 
 from pangeia.persistence.config import PersistenceConfig
 
@@ -81,3 +82,41 @@ class SimulationConfig:
     @classmethod
     def default(cls) -> "SimulationConfig":
         return cls()
+
+    def as_dict(self) -> Dict[str, Any]:
+        import copy
+        from dataclasses import asdict
+        raw = asdict(self)
+        # Converte enums para string
+        for section in raw.values():
+            if isinstance(section, dict):
+                for k, v in list(section.items()):
+                    if isinstance(v, Enum):
+                        section[k] = v.value
+        return raw
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "SimulationConfig":
+        from pangeia.persistence.config import PersistenceBackend
+        cfg = cls()
+        enum_fields = {
+            ("persistence", "backend"): PersistenceBackend,
+        }
+        for section, section_cls in [
+            ("world", WorldConfig),
+            ("resources", ResourceConfig),
+            ("agent", AgentConfig),
+            ("economy", EconomyConfig),
+            ("governance", GovernanceConfig),
+            ("persistence", PersistenceConfig),
+        ]:
+            if section in data:
+                current = getattr(cfg, section)
+                for k, v in data[section].items():
+                    if hasattr(current, k):
+                        enum_type = enum_fields.get((section, k))
+                        if enum_type and isinstance(v, str):
+                            setattr(current, k, enum_type(v))
+                        else:
+                            setattr(current, k, v)
+        return cfg

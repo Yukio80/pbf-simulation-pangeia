@@ -2,19 +2,21 @@ from __future__ import annotations
 
 import asyncio
 import os
-import threading
-from typing import Optional, List
+from typing import Any, Dict, List, Optional
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from pangeia.simulation import Simulation
-from pangeia.metrics.tracker import MetricsSnapshot
+from pangeia.config import SimulationConfig
+from pangeia.engine.event_store import EventStore
+from pangeia.engine.simulation_worker import WorkerManager
 from pangeia.api.schemas import (
     SimulationStatus, WorldSummary, EconomySummary,
     GovernanceSummary, MetricsSummary, FullSummary,
 )
+from pangeia.api.state_reader import StateReader
+
 
 _api_dir = os.path.dirname(os.path.abspath(__file__))
 _static_dir = os.path.join(_api_dir, "static")
@@ -22,42 +24,105 @@ _static_dir = os.path.join(_api_dir, "static")
 app = FastAPI(title="Projeto Pangeia API")
 app.mount("/static", StaticFiles(directory=_static_dir), name="static")
 
-simulation: Optional[Simulation] = None
-sim_thread: Optional[threading.Thread] = None
-sim_running: bool = False
-sim_speed: float = 1.0
+worker_manager: Optional[WorkerManager] = None
+state_reader: Optional[StateReader] = None
+event_store: Optional[EventStore] = None
+config: Optional[SimulationConfig] = None
 
 websocket_clients: list[WebSocket] = []
 ws_lock = asyncio.Lock()
+_ws_send_queue: asyncio.Queue[Dict] = asyncio.Queue()
 
 
-def get_sim() -> Simulation:
-    global simulation
-    if simulation is None:
-        from pangeia.config import SimulationConfig
-        from pangeia.persistence.config import PersistenceConfig
-        cfg = SimulationConfig.default()
-        cfg.persistence = PersistenceConfig.from_env()
-        simulation = Simulation(cfg)
-    return simulation
+def init_simulation(
+    event_store_path: str = ":memory:",
+    seed: int = 42,
+    population: int = 500,
+):
+    global worker_manager, state_reader, event_store, config
+    from pangeia.persistence.config import PersistenceConfig
 
+    config = SimulationConfig.default()
+    config.world.seed = seed
+    config.world.initial_population = population
+    config.persistence = PersistenceConfig.from_env()
+
+    event_store = EventStore(event_store_path)
+    worker_manager = WorkerManager(config, event_store_path=event_store_path)
+    worker_manager.start()
+    state_reader = StateReader(event_store, worker_manager)
+
+
+async def drain_status_task():
+    """Task que drena status do worker e alimenta WebSocket."""
+    while True:
+        await asyncio.sleep(0.05)
+        if not worker_manager or not worker_manager.is_alive:
+            continue
+        status_msgs = worker_manager.drain_status()
+        for msg in status_msgs:
+            if msg["type"] == "tick":
+                await _ws_broadcast({
+                    "type": "tick",
+                    "tick": msg["tick"],
+                    "metrics": msg["metrics"],
+                    "alive_count": msg.get("alive_count", 0),
+                    "agent_count": msg.get("agent_count", 0),
+                })
+            elif msg["type"] == "error":
+                await _ws_broadcast({
+                    "type": "error",
+                    "error": msg.get("error", "unknown error"),
+                })
+
+
+async def _ws_broadcast(data: Dict):
+    """Envia mensagem para todos os WebSocket clients."""
+    async with ws_lock:
+        if not websocket_clients:
+            return
+        clients = list(websocket_clients)
+    stale = []
+    for ws in clients:
+        try:
+            await ws.send_json(data)
+        except Exception:
+            stale.append(ws)
+    if stale:
+        async with ws_lock:
+            for ws in stale:
+                if ws in websocket_clients:
+                    websocket_clients.remove(ws)
+
+
+def get_reader() -> StateReader:
+    if state_reader is None:
+        raise HTTPException(status_code=503, detail="Simulation not initialized")
+    return state_reader
+
+
+def get_worker() -> WorkerManager:
+    if worker_manager is None:
+        raise HTTPException(status_code=503, detail="Simulation not initialized")
+    return worker_manager
+
+
+# ─── Lifecycle ──────────────────────────────────────────────
 
 @app.on_event("startup")
 async def startup():
-    global simulation
-    from pangeia.config import SimulationConfig
-    from pangeia.persistence.config import PersistenceConfig
-    cfg = SimulationConfig.default()
-    cfg.persistence = PersistenceConfig.from_env()
-    simulation = Simulation(cfg)
+    init_simulation()
+    asyncio.create_task(drain_status_task())
 
+
+# ─── Root ────────────────────────────────────────────────────
 
 @app.get("/")
 async def root():
     return {
         "project": "Projeto Pangeia",
         "description": "Laboratório de civilizações artificiais",
-        "status": await status(),
+        "status": get_reader().status(),
     }
 
 
@@ -66,332 +131,270 @@ async def dashboard():
     return FileResponse(os.path.join(_static_dir, "dashboard.html"))
 
 
+# ─── Core State ──────────────────────────────────────────────
+
 @app.get("/status")
 async def status():
-    sim = get_sim()
-    return SimulationStatus(
-        running=sim_running,
-        tick=sim.world.state.tick,
-        time=sim.world.state.time,
-        agent_count=len(sim.agents),
-        alive_count=sum(1 for a in sim.agents.values() if a.state.is_alive),
-    )
+    return get_reader().status()
 
 
 @app.get("/summary")
 async def summary():
-    sim = get_sim()
-    return sim.summary()
+    return get_reader().summary()
 
 
 @app.get("/world")
 async def world():
-    sim = get_sim()
-    return sim.world.summary()
+    return get_reader().world()
 
 
 @app.get("/economy")
 async def economy():
-    sim = get_sim()
-    return sim.economy.summary()
+    return get_reader().economy()
 
 
 @app.get("/governance")
 async def governance():
-    sim = get_sim()
-    return sim.governance.summary()
-
-
-@app.get("/agents")
-async def agents_list(limit: int = 100, offset: int = 0):
-    sim = get_sim()
-    agent_list = list(sim.agents.values())
-    page = agent_list[offset:offset + limit]
-    return {
-        "total": len(agent_list),
-        "alive": sum(1 for a in agent_list if a.state.is_alive),
-        "agents": [a.summarize() for a in page],
-    }
-
-
-@app.get("/agents/{agent_id}")
-async def agent_detail(agent_id: str):
-    sim = get_sim()
-    agent = sim.get_agent(agent_id)
-    if not agent:
-        return JSONResponse(status_code=404, content={"error": "Agent not found"})
-    return agent.summarize()
-
-
-@app.get("/metrics")
-async def metrics():
-    sim = get_sim()
-    return sim.metrics.summary()
-
-
-@app.get("/metrics/history")
-async def metrics_history(n: int = 100):
-    sim = get_sim()
-    return [m.as_dict() for m in sim.metrics.history[-n:]]
-
-
-@app.get("/events")
-async def events():
-    sim = get_sim()
-    return sim.world.state.events[-50:]
+    return get_reader().governance()
 
 
 @app.get("/culture")
 async def culture():
-    sim = get_sim()
-    return {
-        "beliefs": sim.belief_system.summary(),
-        "memes": sim.meme_pool.summarize(),
-        "religion": sim.religion_system.summary(),
-        "ideologies": sim.ideology_system.summary(),
-    }
-
-
-@app.get("/civilization")
-async def civilization():
-    sim = get_sim()
-    return sim.civilization_index()
+    return get_reader().culture()
 
 
 @app.get("/ideologies")
 async def ideologies():
-    sim = get_sim()
-    return sim.ideology_system.summary()
+    return get_reader().culture().get("ideologies", {})
 
 
 @app.get("/diplomacy")
 async def diplomacy():
-    sim = get_sim()
-    return sim.diplomacy.summary()
+    return get_reader().diplomacy()
 
 
 @app.get("/stratification")
 async def stratification():
-    sim = get_sim()
-    return sim.stratification.summary()
+    return get_reader().stratification()
 
 
-@app.get("/history")
-async def history():
-    sim = get_sim()
-    return sim.narratives.summary()
+# ─── Agents ──────────────────────────────────────────────────
+
+@app.get("/agents")
+async def agents_list(limit: int = 100, offset: int = 0):
+    return get_reader().agent_list(limit=limit, offset=offset)
 
 
-@app.get("/history/timeline")
-async def history_timeline():
-    sim = get_sim()
-    return sim.narratives.timeline[-100:]
+@app.get("/agents/{agent_id}")
+async def agent_detail(agent_id: str):
+    agent = get_reader().agent_detail(agent_id)
+    if not agent:
+        raise HTTPException(status_code=404, detail="Agent not found")
+    return agent
 
+
+# ─── Metrics ─────────────────────────────────────────────────
+
+@app.get("/metrics")
+async def metrics():
+    return get_reader().metrics()
+
+
+@app.get("/metrics/history")
+async def metrics_history(n: int = 100):
+    return get_reader().metrics_history(n=n)
+
+
+@app.get("/events")
+async def world_events():
+    return get_reader().world_events()
+
+
+# ─── Civilization ────────────────────────────────────────────
+
+@app.get("/civilization")
+async def civilization():
+    return get_reader().civilization()
+
+
+# ─── Technology ──────────────────────────────────────────────
 
 @app.get("/technology")
 async def technology():
-    sim = get_sim()
-    return sim.technology.summary()
+    return get_reader().technology()
 
 
 @app.get("/technology/tree")
 async def technology_tree():
-    sim = get_sim()
-    return [t.as_dict() for t in sim.technology.technologies.values()]
+    return get_reader().technology_tree()
 
+
+# ─── History / Narratives ────────────────────────────────────
+
+@app.get("/history")
+async def history():
+    return get_reader().narratives()
+
+
+@app.get("/history/timeline")
+async def history_timeline():
+    return get_reader().narratives_timeline()
+
+
+# ─── Collective Memory ───────────────────────────────────────
 
 @app.get("/collective_memory")
 async def collective_memory():
-    sim = get_sim()
-    return sim.collective_memory.summarize()
+    return get_reader().collective_memory()
 
 
 @app.get("/collective_memory/myths")
 async def collective_memory_myths():
-    sim = get_sim()
-    return [m.as_dict() for m in sim.collective_memory.get_myths()]
+    cm = get_reader().collective_memory()
+    return cm.get("by_narrative_type", {}).get("myth", [])
 
 
 @app.get("/collective_memory/volatility")
 async def collective_memory_volatility():
-    sim = get_sim()
-    return sim.collective_memory.volatility(sim.world.state.tick).as_dict()
+    cm = get_reader().collective_memory()
+    return cm.get("volatility", {})
 
 
 @app.get("/collective_memory/narratives/{narrative_type}")
 async def collective_memory_narratives(narrative_type: str):
-    sim = get_sim()
-    return [m.as_dict() for m in sim.collective_memory.get_memories(narrative_type=narrative_type)]
+    cm = get_reader().collective_memory()
+    return cm.get("by_narrative_type", {}).get(narrative_type, [])
 
 
 @app.get("/collective_memory/identity")
 async def collective_memory_identity():
-    sim = get_sim()
-    return sim.collective_memory.identity().as_dict()
+    cm = get_reader().collective_memory()
+    return cm.get("identity", {})
 
 
 @app.get("/collective_memory/actors")
 async def collective_memory_actors():
-    sim = get_sim()
-    return [a.as_dict() for a in sim.collective_memory.actors.values()]
+    cm = get_reader().collective_memory()
+    return cm.get("actor_details", [])
 
 
 @app.get("/collective_memory/actors/{agent_id}")
 async def collective_memory_actor(agent_id: str):
-    sim = get_sim()
-    actor = sim.collective_memory.actors.get(agent_id)
-    if not actor:
-        raise HTTPException(status_code=404, detail="Actor not found")
-    return actor.as_dict()
+    cm = get_reader().collective_memory()
+    actors = cm.get("actor_details", [])
+    for a in actors:
+        if a.get("actor_id") == agent_id:
+            return a
+    raise HTTPException(status_code=404, detail="Actor not found")
 
+
+# ─── Bot / PAP ───────────────────────────────────────────────
 
 @app.post("/bot/register")
 async def bot_register(name: str, api_endpoint: str, api_key: str,
                        capabilities: str = "[]", version: str = "1.0",
                        description: str = ""):
-    sim = get_sim()
-    import json
-    try:
-        caps = json.loads(capabilities)
-    except json.JSONDecodeError:
-        caps = [capabilities]
-    manifest = {
-        "capabilities": caps,
-        "version": version,
-        "description": description,
-    }
-    return sim.pap.register(name, api_endpoint, api_key, manifest, sim.world.state.tick)
+    return get_worker().register_bot(
+        name=name, api_endpoint=api_endpoint, api_key=api_key,
+        capabilities=capabilities, version=version, description=description,
+    )
 
 
 @app.get("/bot/manifest/{agent_id}")
 async def bot_manifest(agent_id: str):
-    sim = get_sim()
-    return sim.pap.get_manifest(agent_id)
+    return get_worker().bot_manifest(agent_id=agent_id)
 
 
 @app.post("/bot/observe/{agent_id}")
 async def bot_observe(agent_id: str):
-    sim = get_sim()
-    return sim.pap.observe(agent_id, sim)
+    return get_worker().bot_observe(agent_id=agent_id)
 
 
 @app.post("/bot/decide/{agent_id}")
 async def bot_decide(agent_id: str, nonce: str = ""):
-    sim = get_sim()
-    observation = sim.pap.observe(agent_id, sim)
-    if "error" in observation:
-        return observation
-    return sim.pap.decide(agent_id, observation, sim, nonce=nonce)
+    return get_worker().bot_decide(agent_id=agent_id, nonce=nonce)
 
 
 @app.post("/bot/vote/{agent_id}")
 async def bot_vote(agent_id: str, proposal_id: str, vote: str, nonce: str = ""):
-    sim = get_sim()
-    return sim.pap.vote(agent_id, proposal_id, vote, sim, nonce=nonce)
+    return get_worker().bot_vote(
+        agent_id=agent_id, proposal_id=proposal_id, vote=vote, nonce=nonce,
+    )
 
 
 @app.post("/bot/communicate/{agent_id}")
-async def bot_communicate(agent_id: str, message: str, channel: str = "public", nonce: str = ""):
-    sim = get_sim()
-    return sim.pap.communicate(agent_id, message, channel, sim, nonce=nonce)
+async def bot_communicate(agent_id: str, message: str, channel: str = "public",
+                          nonce: str = ""):
+    return get_worker().bot_communicate(
+        agent_id=agent_id, message=message, channel=channel, nonce=nonce,
+    )
 
 
 @app.get("/bot/audit/{agent_id}")
 async def bot_audit(agent_id: str, limit: int = 100, offset: int = 0):
-    sim = get_sim()
-    events = sim.audit_log.get_events(
-        aggregate_id=agent_id,
-        limit=limit,
-        offset=offset,
-    )
-    return {
-        "agent_id": agent_id,
-        "total": sim.audit_log.get_event_count(aggregate_id=agent_id),
-        "events": [e.as_dict() for e in events],
-    }
+    return get_worker().bot_audit(agent_id=agent_id, limit=limit, offset=offset)
 
 
 @app.get("/external_agents")
 async def external_agents():
-    sim = get_sim()
-    return sim.pap.summary()
+    return get_worker().external_agents_summary()
 
+
+# ─── Icarus ──────────────────────────────────────────────────
 
 @app.post("/bot/icarus/start")
 async def icarus_start(strategy: str = "conservative", remote_url: str = ""):
-    sim = get_sim()
-    from pangeia.external_agents.icarus_gateway import IcarusGateway
-    gateway = IcarusGateway(strategy_name=strategy, remote_url=remote_url)
-    bot_id = gateway.register_via_pap(sim)
-    sim.icarus = gateway
-    return {
-        "status": "icarus_started",
-        "bot_id": bot_id,
-        "strategy": strategy,
-        "summary": gateway.summary(),
-    }
+    return get_worker().icarus_start(strategy=strategy, remote_url=remote_url)
 
 
 @app.get("/bot/icarus/status")
 async def icarus_status():
-    sim = get_sim()
-    if not sim.icarus:
-        return {"status": "not_started"}
-    return sim.icarus.summary()
+    return get_worker().icarus_status()
 
 
 @app.post("/bot/icarus/cycle")
 async def icarus_cycle():
-    sim = get_sim()
-    if not sim.icarus:
-        return {"error": "Icarus not started. POST /bot/icarus/start first."}
-    observe_result = sim.icarus.observe(sim)
-    decisions = sim.icarus.decide(sim)
-    return {
-        "observe": observe_result,
-        "decisions": decisions,
-        "decision_count": len(decisions),
-    }
+    return get_worker().icarus_cycle()
 
+
+# ─── Simulation Control ──────────────────────────────────────
 
 @app.post("/simulation/start")
 async def start_simulation(speed: float = 1.0):
-    global sim_running, sim_speed
-    if sim_running:
-        return {"status": "already_running"}
-    sim_speed = speed
-    sim_running = True
-    asyncio.create_task(_run_simulation_loop())
+    w = get_worker()
+    w.send_command("start", speed=speed)
     return {"status": "started", "speed": speed}
 
 
 @app.post("/simulation/stop")
 async def stop_simulation():
-    global sim_running
-    sim_running = False
-    return {"status": "stopped"}
+    w = get_worker()
+    w.send_command("pause")
+    return {"status": "paused"}
 
 
 @app.post("/simulation/reset")
 async def reset_simulation():
-    global simulation, sim_running
-    sim_running = False
-    simulation = Simulation()
+    w = get_worker()
+    w.send_command("reset", config=(config.as_dict() if config else {}))
     return {"status": "reset"}
 
 
 @app.get("/simulation/config")
 async def get_config():
-    sim = get_sim()
+    if config is None:
+        return {}
     return {
         "world": {
-            "initial_population": sim.config.world.initial_population,
-            "max_population": sim.config.world.max_population,
-            "territory_size": sim.config.world.territory_size,
-            "seed": sim.config.world.seed,
+            "initial_population": config.world.initial_population,
+            "max_population": config.world.max_population,
+            "territory_size": config.world.territory_size,
+            "seed": config.world.seed,
         }
     }
 
+
+# ─── Audit ───────────────────────────────────────────────────
 
 @app.get("/audit/events")
 async def audit_events(
@@ -401,101 +404,62 @@ async def audit_events(
     limit: int = 100,
     offset: int = 0,
 ):
-    sim = get_sim()
-    events = sim.audit_log.get_events(
-        event_type=event_type or None,
-        aggregate_type=aggregate_type or None,
-        aggregate_id=aggregate_id or None,
-        limit=limit,
-        offset=offset,
+    return get_worker().audit_events(
+        event_type=event_type, aggregate_type=aggregate_type,
+        aggregate_id=aggregate_id, limit=limit, offset=offset,
     )
-    return {
-        "total": sim.audit_log.get_event_count(
-            event_type=event_type or None,
-            aggregate_type=aggregate_type or None,
-        ),
-        "events": [e.as_dict() for e in events],
-    }
 
 
 @app.get("/audit/events/tick/{tick}")
 async def audit_events_by_tick(tick: int):
-    sim = get_sim()
-    return [e.as_dict() for e in sim.audit_log.get_events(tick=tick)]
+    return get_worker().audit_by_tick(tick=tick)
 
 
 @app.get("/audit/events/range")
 async def audit_events_range(start_tick: int, end_tick: int):
-    sim = get_sim()
-    return {
-        "events": [
-            e.as_dict()
-            for e in sim.audit_log.get_events_range(start_tick, end_tick)
-        ],
-    }
+    return get_worker().audit_range(start_tick=start_tick, end_tick=end_tick)
 
 
 @app.get("/audit/stats")
 async def audit_stats():
-    sim = get_sim()
-    return {
-        "total_events": sim.audit_log.get_event_count(),
-        "latest_tick": sim.audit_log.get_latest_tick(),
-        "events_by_type": {
-            t: sim.audit_log.get_event_count(event_type=t)
-            for t in [
-                "agent_created", "agent_died", "company_created",
-                "religion_founded", "technology_discovered",
-                "faction_created", "world_event", "tick",
-            ]
-        },
-    }
+    return get_worker().audit_stats()
 
 
 @app.get("/audit/replay-status")
 async def audit_replay_status():
-    sim = get_sim()
     return {
-        "authoritative_source": "in_memory",
-        "audit_log_size": sim.audit_log.get_event_count(),
-        "snapshot_count": 0,
-        "warning": "Full replay not supported in this version",
+        "authoritative_source": "worker_process",
+        "event_store": "sqlite",
+        "snapshot_interval": 10,
+        "warning": "Events are append-only; snapshots enable fast restart",
     }
 
+
+# ─── News ────────────────────────────────────────────────────
 
 @app.get("/news")
 async def news_list(category: Optional[str] = None,
                     severity: Optional[str] = None,
                     limit: int = 20, offset: int = 0):
-    sim = get_sim()
-    articles = sim.newsroom.query(
-        category=category or None,
-        severity=severity or None,
-        limit=limit,
-        offset=offset,
+    return get_worker().get_news(
+        category=category, severity=severity, limit=limit, offset=offset,
     )
-    return {
-        "total": sim.newsroom.summary()["total_articles"],
-        "articles": [a.as_dict() for a in articles],
-    }
 
 
 @app.get("/news/latest")
 async def news_latest(n: int = 10):
-    sim = get_sim()
-    return {
-        "articles": [a.as_dict() for a in sim.newsroom.latest(n)],
-    }
+    return get_worker().news_latest(n=n)
 
 
 @app.get("/news/{article_id}")
 async def news_detail(article_id: str):
-    sim = get_sim()
-    article = sim.newsroom.get(article_id)
-    if not article:
-        return JSONResponse(status_code=404, content={"error": "Article not found"})
-    return article.as_dict()
+    result = get_worker().news_detail(article_id=article_id)
+    if result is None:
+        raise HTTPException(status_code=404, detail="Article not found")
+    return result
 
+
+# ─── WebSocket ───────────────────────────────────────────────
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
@@ -510,38 +474,3 @@ async def websocket_endpoint(websocket: WebSocket):
     except WebSocketDisconnect:
         async with ws_lock:
             websocket_clients.remove(websocket)
-
-
-async def _run_simulation_loop():
-    global sim_running
-    sim = get_sim()
-    while sim_running:
-        snapshot = sim.step()
-        await _broadcast_tick(sim, snapshot)
-        await asyncio.sleep(1.0 / max(0.1, sim_speed))
-
-
-async def _broadcast_tick(sim: Simulation, snapshot: MetricsSnapshot):
-    async with ws_lock:
-        if not websocket_clients:
-            return
-        clients = list(websocket_clients)
-    news = sim.newsroom.latest(3)
-    data = {
-        "type": "tick",
-        "tick": snapshot.tick,
-        "metrics": snapshot.as_dict(),
-        "summary": sim.summary()["economy"],
-        "headlines": [{"id": a.id, "headline": a.headline, "category": a.category, "severity": a.severity} for a in news],
-    }
-    stale = []
-    for ws in clients:
-        try:
-            await ws.send_json(data)
-        except Exception:
-            stale.append(ws)
-    if stale:
-        async with ws_lock:
-            for ws in stale:
-                if ws in websocket_clients:
-                    websocket_clients.remove(ws)
