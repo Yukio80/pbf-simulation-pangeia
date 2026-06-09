@@ -188,14 +188,17 @@ class MoltbookAgent(Agent):
 
     def moltbook_upvote(self, sim: "Simulation") -> int:
         count = 0
-        for agent in sim.agents.values():
-            if agent.agent_id == self.agent_id or not agent.state.is_alive:
-                continue
+        candidates = [a for a in sim.agents.values()
+                      if a.agent_id != self.agent_id and a.state.is_alive]
+        sample_size = min(20, len(candidates))
+        if sample_size == 0:
+            return 0
+        sampled = self.rng.sample(candidates, sample_size)
+        for agent in sampled:
             for event in reversed(agent.state.life_events[-20:]):
                 if event.event_type in ("speech", "idea", "published"):
                     text = f"{event.event_type} {event.description}"
                     if _INTEREST_PATTERN.search(text):
-                        # "upvota" fortalecendo relacao social
                         rel = self.social.relationships.get(agent.agent_id)
                         if rel:
                             rel.trust = min(1.0, rel.trust + 0.02)
@@ -206,11 +209,14 @@ class MoltbookAgent(Agent):
         return count
 
     def moltbook_comment(self, sim: "Simulation") -> Optional[str]:
-        for agent in sim.agents.values():
-            if agent.agent_id == self.agent_id or not agent.state.is_alive:
-                continue
-            if agent.agent_id in self._commented:
-                continue
+        candidates = [a for a in sim.agents.values()
+                      if a.agent_id != self.agent_id and a.state.is_alive
+                      and a.agent_id not in self._commented]
+        sample_size = min(10, len(candidates))
+        if sample_size == 0:
+            return None
+        sampled = self.rng.sample(candidates, sample_size)
+        for agent in sampled:
             for event in reversed(agent.state.life_events[-30:]):
                 text = f"{event.event_type}: {event.description}"
                 for pattern, reply in _CONTEXTUAL_REPLIES:

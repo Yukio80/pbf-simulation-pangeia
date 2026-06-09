@@ -31,6 +31,130 @@ from pangeia.engine.batch_processor import BatchProcessor
 from pangeia.persistence import AuditRecorder, AuditLog, InMemoryAuditLog, PersistenceBackend
 
 
+def _handle_working(sim, agent, tick):
+    output = agent.work()
+    agent.state.wealth += output * 0.5
+
+
+def _handle_researching(sim, agent, tick):
+    agent.work(1.5)
+    sim.economy.indicators.tech_level = min(
+        1.0, sim.economy.indicators.tech_level + 0.0001
+    )
+
+
+def _handle_starting_company(sim, agent, tick):
+    if agent.state.wealth >= sim.config.economy.company_startup_cost:
+        industry = sim.rng.choice(["tech", "manufacturing", "services", "agriculture"])
+        company = sim.economy.register_company(agent, industry)
+        if company:
+            agent.state.employer_id = company.id
+
+
+def _handle_socializing(sim, agent, tick):
+    alive = sim._alive_ids
+    if not alive or sim.rng.random() < 0.5:
+        return
+    other = sim.rng.choice(alive)
+    attempts = 0
+    while other.agent_id == agent.agent_id and attempts < 5:
+        other = sim.rng.choice(alive)
+        attempts += 1
+    if other.agent_id == agent.agent_id:
+        return
+    topic = sim.rng.choice(["resources", "politics", "economy", "philosophy"])
+    agent.communicate(other, f"Discussing {topic}", 0.3)
+    agent.social.add_relationship(other.agent_id)
+    if sim.rng.random() < 0.3:
+        agent.state.add_personal_relation(
+            other.agent_id, "friend", sim.rng.uniform(0.3, 0.7),
+            f"Bonded over {topic}", tick,
+        )
+        other.state.add_personal_relation(
+            agent.agent_id, "friend", sim.rng.uniform(0.3, 0.7),
+            f"Bonded over {topic}", tick,
+        )
+    if other.agent_id not in agent.state.reputation:
+        from pangeia.core.agent import ReputationEntry
+        agent.state.reputation[other.agent_id] = ReputationEntry(
+            agent_id=other.agent_id,
+            trust=sim.rng.uniform(0.3, 0.6),
+            respect=sim.rng.uniform(0.2, 0.5),
+            fear=0.0,
+        )
+
+
+def _handle_learning(sim, agent, tick):
+    topic = sim.rng.choice(["technology", "economy", "politics", "culture", "science"])
+    agent.learn(topic, 0.01)
+
+
+def _handle_consuming(sim, agent, tick):
+    agent.state.wealth -= 2.0
+
+
+def _handle_make_speech(sim, agent, tick):
+    theme = sim.rng.choice(["unity", "progress", "security", "prosperity"])
+    speech = f"Citizens of Pangeia, we must focus on {theme}!"
+    msg = Message(
+        sender_id=agent.agent_id,
+        content=speech,
+        message_type="media",
+        truth_value=True,
+    )
+    sim.communication.broadcast(msg, sim.agents)
+
+
+def _handle_contemplating(sim, agent, tick):
+    if sim.rng.random() < 0.05:
+        myth = sim.belief_system.generate_myth(sim.rng)
+        agent.knowledge.add_belief(
+            myth, 0.8, agent.agent_id, "mythology"
+        )
+
+
+def _handle_patrolling(sim, agent, tick):
+    agent.state.energy -= 1.0
+
+
+def _handle_protecting_resources(sim, agent, tick):
+    agent.state.energy -= 1.5
+
+
+def _handle_seeking_job(sim, agent, tick):
+    for company in sim.economy.companies.values():
+        if len(company.employees) < 10:
+            company.hire(agent.agent_id)
+            agent.state.employer_id = company.id
+            break
+
+
+def _handle_investigating(sim, agent, tick):
+    recent_events = sim.world.state.events[-3:] if sim.world.state.events else []
+    if recent_events:
+        event = sim.rng.choice(recent_events)
+        agent.knowledge.add_belief(
+            f"Investigated: {event['description']}",
+            0.6, agent.agent_id, "investigation"
+        )
+
+
+_ACTION_HANDLERS = {
+    "working": _handle_working,
+    "researching": _handle_researching,
+    "starting_company": _handle_starting_company,
+    "socializing": _handle_socializing,
+    "learning": _handle_learning,
+    "consuming": _handle_consuming,
+    "make_speech": _handle_make_speech,
+    "contemplating": _handle_contemplating,
+    "patrolling": _handle_patrolling,
+    "protecting_resources": _handle_protecting_resources,
+    "seeking_job": _handle_seeking_job,
+    "investigating": _handle_investigating,
+}
+
+
 class Simulation:
     def __init__(self, config: Optional[SimulationConfig] = None,
                  audit_log: Optional[AuditLog] = None):
@@ -226,6 +350,7 @@ class Simulation:
         self.world.regenerate()
 
         alive_ids = [a for a in self.agents.values() if a.state.is_alive]
+        self._alive_ids = alive_ids  # cache for handlers
         self._expensive_cache = {
             'economy_summary': self.economy.summary(),
             'governance_summary': self.governance.summary(),
@@ -304,19 +429,22 @@ class Simulation:
                     entry.trust = rel.trust * 0.7 + entry.trust * 0.3
                     entry.respect = max(entry.respect, agent.state.influence * 0.3)
 
-        # --- Personalidade: evolução lenta e necessidades ---
+        # --- Personalidade: evolução lenta e necessidades (a cada 2 ticks) ---
+        evolve_this_tick = tick % 2 == 0
+        trim_emotions_this_tick = tick % 5 == 0
         for agent in self.agents.values():
             if not agent.state.is_alive:
                 continue
-            if not getattr(agent, '_temperament_frozen', False):
-                agent.temperament.mutate(rate=0.005, rng=self.rng)
-            if not getattr(agent, '_needs_frozen', False):
-                agent.needs.decay(rate=0.003)
-                if agent.state.wealth > 100:
-                    agent.needs.satisfy(autonomy=0.01, competence=0.005)
-                if len(agent.social.relationships) > 3:
-                    agent.needs.satisfy(belonging=0.01)
-            if not getattr(agent, '_emotions_frozen', False):
+            if evolve_this_tick:
+                if not getattr(agent, '_temperament_frozen', False):
+                    agent.temperament.mutate(rate=0.005, rng=self.rng)
+                if not getattr(agent, '_needs_frozen', False):
+                    agent.needs.decay(rate=0.003)
+                    if agent.state.wealth > 100:
+                        agent.needs.satisfy(autonomy=0.01, competence=0.005)
+                    if len(agent.social.relationships) > 3:
+                        agent.needs.satisfy(belonging=0.01)
+            if trim_emotions_this_tick and not getattr(agent, '_emotions_frozen', False):
                 n_keep = 0
                 for em in agent.emotional_memories:
                     em.decay(rate=0.002)
@@ -479,91 +607,15 @@ class Simulation:
             self._last_narrated_ids = set(list(self._last_narrated_ids)[-100:])
 
     def _process_action(self, agent: Agent, action: str, tick: int):
-        if action == "working":
-            output = agent.work()
-            agent.state.wealth += output * 0.5
-        elif action == "researching":
-            agent.work(1.5)
-            self.economy.indicators.tech_level = min(
-                1.0, self.economy.indicators.tech_level + 0.0001
-            )
-        elif action == "starting_company":
-            if agent.state.wealth >= self.config.economy.company_startup_cost:
-                industry = self.rng.choice(["tech", "manufacturing", "services", "agriculture"])
-                company = self.economy.register_company(agent, industry)
-                if company:
-                    agent.state.employer_id = company.id
-        elif action == "socializing":
-            others = [a for a in self.agents.values()
-                      if a.agent_id != agent.agent_id and a.state.is_alive]
-            if others and self.rng.random() < 0.5:
-                others = self.rng.sample(others, min(10, len(others)))
-                other = self.rng.choice(others)
-                topic = self.rng.choice(["resources", "politics", "economy", "philosophy"])
-                agent.communicate(other, f"Discussing {topic}", 0.3)
-                agent.social.add_relationship(other.agent_id)
-                if self.rng.random() < 0.3:
-                    agent.state.add_personal_relation(
-                        other.agent_id, "friend", self.rng.uniform(0.3, 0.7),
-                        f"Bonded over {topic}", tick,
-                    )
-                    other.state.add_personal_relation(
-                        agent.agent_id, "friend", self.rng.uniform(0.3, 0.7),
-                        f"Bonded over {topic}", tick,
-                    )
-                if other.agent_id not in agent.state.reputation:
-                    agent.state.reputation[other.agent_id] = ReputationEntry(
-                        agent_id=other.agent_id,
-                        trust=self.rng.uniform(0.3, 0.6),
-                        respect=self.rng.uniform(0.2, 0.5),
-                        fear=0.0,
-                    )
-        elif action == "learning":
-            topics = ["technology", "economy", "politics", "culture", "science"]
-            topic = self.rng.choice(topics)
-            agent.learn(topic, 0.01)
-        elif action == "consuming":
-            agent.state.wealth -= 2.0
-        elif action == "make_speech":
-            theme = self.rng.choice(["unity", "progress", "security", "prosperity"])
-            speech = f"Citizens of Pangeia, we must focus on {theme}!"
-            msg = Message(
-                sender_id=agent.agent_id,
-                content=speech,
-                message_type="media",
-                truth_value=True,
-            )
-            self.communication.broadcast(msg, self.agents)
+        handler = _ACTION_HANDLERS.get(action)
+        if handler is not None:
+            handler(self, agent, tick)
         elif action.startswith("discovered:"):
             pass
-        elif action == "contemplating":
-            if self.rng.random() < 0.05:
-                myth = self.belief_system.generate_myth(self.rng)
-                agent.knowledge.add_belief(
-                    myth, 0.8, agent.agent_id, "mythology"
-                )
         elif action.startswith("idea:"):
             pass
         elif action.startswith("published:"):
             pass
-        elif action == "patrolling":
-            agent.state.energy -= 1.0
-        elif action == "protecting_resources":
-            agent.state.energy -= 1.5
-        elif action == "seeking_job":
-            for company in self.economy.companies.values():
-                if len(company.employees) < 10:
-                    company.hire(agent.agent_id)
-                    agent.state.employer_id = company.id
-                    break
-        elif action == "investigating":
-            recent_events = self.world.state.events[-3:] if self.world.state.events else []
-            if recent_events:
-                event = self.rng.choice(recent_events)
-                agent.knowledge.add_belief(
-                    f"Investigated: {event['description']}",
-                    0.6, agent.agent_id, "investigation"
-                )
 
     def _update_economy(self):
         self.economy.step(self)
