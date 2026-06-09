@@ -7,6 +7,7 @@ from typing import Any, Dict, List, Optional
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
+from fastapi import Body
 
 from pangeia.config import SimulationConfig
 from pangeia.engine.event_store import EventStore
@@ -14,8 +15,18 @@ from pangeia.engine.simulation_worker import WorkerManager
 from pangeia.api.schemas import (
     SimulationStatus, WorldSummary, EconomySummary,
     GovernanceSummary, MetricsSummary, FullSummary,
+    BotRegisterRequest, BotRegisterResponse,
+    BotManifestResponse, BotObserveResponse,
+    BotDecideRequest, BotDecideResponse,
+    BotVoteRequest, BotVoteResponse,
+    BotCommunicateRequest, BotCommunicateResponse,
+    BotAuditResponse, ExternalAgentsListResponse,
+    IcarusStartRequest, IcarusStartResponse, IcarusCycleResponse,
+    SimulationStartRequest, SimulationConfigResponse,
+    AuditEventResponse, AuditStatsResponse, AuditReplayStatusResponse,
+    NewsArticleResponse, NewsListResponse,
+    AblationRunRequest, AblationRunResponse,
 )
-from pangeia.api.state_reader import StateReader
 
 
 _api_dir = os.path.dirname(os.path.abspath(__file__))
@@ -95,6 +106,57 @@ async def _ws_broadcast(data: Dict):
                     websocket_clients.remove(ws)
 
 
+# ─── Ablation Experiment Runner ────────────────────────────
+
+import uuid
+import asyncio
+from concurrent.futures import ThreadPoolExecutor
+
+_ablation_tasks: Dict[str, Dict] = {}
+_ablation_executor = ThreadPoolExecutor(max_workers=1)
+
+
+@app.post("/ablation/run", response_model=AblationRunResponse)
+async def run_ablation_api(req: AblationRunRequest):
+    task_id = str(uuid.uuid4())[:8]
+    _ablation_tasks[task_id] = {"status": "running", "results": None}
+
+    def _run():
+        from pangeia.experiments.ablation import run_ablation, AblationConfig
+        cfg = AblationConfig(
+            conditions=req.conditions,
+            seeds=req.seeds,
+            ticks=req.ticks,
+            population=req.population,
+            verbose=False,
+            personality_wiring=True,
+        )
+        results = run_ablation(cfg)
+        _ablation_tasks[task_id] = {"status": "done", "results": [
+            {"condition": r.condition, "seed": r.seed, "metrics": r.metrics}
+            for r in results
+        ]}
+
+    loop = asyncio.get_event_loop()
+    loop.run_in_executor(_ablation_executor, _run)
+
+    return AblationRunResponse(
+        status="started",
+        task_id=task_id,
+        message=f"Ablation started: {len(req.conditions)} conditions × {len(req.seeds)} seeds × {req.ticks} ticks",
+    )
+
+
+@app.get("/ablation/result/{task_id}")
+async def ablation_result(task_id: str):
+    task = _ablation_tasks.get(task_id)
+    if task is None:
+        raise HTTPException(status_code=404, detail="Task not found")
+    if task["status"] == "running":
+        raise HTTPException(status_code=202, detail="Still running")
+    return task
+
+
 def get_reader() -> StateReader:
     if state_reader is None:
         raise HTTPException(status_code=503, detail="Simulation not initialized")
@@ -133,7 +195,7 @@ async def dashboard():
 
 # ─── Core State ──────────────────────────────────────────────
 
-@app.get("/status")
+@app.get("/status", response_model=SimulationStatus)
 async def status():
     return get_reader().status()
 
@@ -290,61 +352,59 @@ async def collective_memory_actor(agent_id: str):
 
 # ─── Bot / PAP ───────────────────────────────────────────────
 
-@app.post("/bot/register")
-async def bot_register(name: str, api_endpoint: str, api_key: str,
-                       capabilities: str = "[]", version: str = "1.0",
-                       description: str = ""):
-    return get_worker().register_bot(
-        name=name, api_endpoint=api_endpoint, api_key=api_key,
-        capabilities=capabilities, version=version, description=description,
+@app.post("/bot/register", response_model=BotRegisterResponse)
+async def bot_register(req: BotRegisterRequest):
+    result = get_worker().register_bot(
+        name=req.name, api_endpoint=req.api_endpoint, api_key=req.api_key,
+        capabilities=req.capabilities, version=req.version, description=req.description,
     )
+    return {"agent_id": result.get("agent_id", "unknown"), "status": "registered"}
 
 
-@app.get("/bot/manifest/{agent_id}")
+@app.get("/bot/manifest/{agent_id}", response_model=BotManifestResponse)
 async def bot_manifest(agent_id: str):
     return get_worker().bot_manifest(agent_id=agent_id)
 
 
-@app.post("/bot/observe/{agent_id}")
+@app.post("/bot/observe/{agent_id}", response_model=BotObserveResponse)
 async def bot_observe(agent_id: str):
     return get_worker().bot_observe(agent_id=agent_id)
 
 
-@app.post("/bot/decide/{agent_id}")
-async def bot_decide(agent_id: str, nonce: str = ""):
-    return get_worker().bot_decide(agent_id=agent_id, nonce=nonce)
+@app.post("/bot/decide/{agent_id}", response_model=BotDecideResponse)
+async def bot_decide(agent_id: str, req: BotDecideRequest = Body(default=BotDecideRequest())):
+    return get_worker().bot_decide(agent_id=agent_id, nonce=req.nonce)
 
 
-@app.post("/bot/vote/{agent_id}")
-async def bot_vote(agent_id: str, proposal_id: str, vote: str, nonce: str = ""):
+@app.post("/bot/vote/{agent_id}", response_model=BotVoteResponse)
+async def bot_vote(agent_id: str, req: BotVoteRequest):
     return get_worker().bot_vote(
-        agent_id=agent_id, proposal_id=proposal_id, vote=vote, nonce=nonce,
+        agent_id=agent_id, proposal_id=req.proposal_id, vote=req.vote, nonce=req.nonce,
     )
 
 
-@app.post("/bot/communicate/{agent_id}")
-async def bot_communicate(agent_id: str, message: str, channel: str = "public",
-                          nonce: str = ""):
+@app.post("/bot/communicate/{agent_id}", response_model=BotCommunicateResponse)
+async def bot_communicate(agent_id: str, req: BotCommunicateRequest):
     return get_worker().bot_communicate(
-        agent_id=agent_id, message=message, channel=channel, nonce=nonce,
+        agent_id=agent_id, message=req.message, channel=req.channel, nonce=req.nonce,
     )
 
 
-@app.get("/bot/audit/{agent_id}")
+@app.get("/bot/audit/{agent_id}", response_model=BotAuditResponse)
 async def bot_audit(agent_id: str, limit: int = 100, offset: int = 0):
     return get_worker().bot_audit(agent_id=agent_id, limit=limit, offset=offset)
 
 
-@app.get("/external_agents")
+@app.get("/external_agents", response_model=ExternalAgentsListResponse)
 async def external_agents():
     return get_worker().external_agents_summary()
 
 
 # ─── Icarus ──────────────────────────────────────────────────
 
-@app.post("/bot/icarus/start")
-async def icarus_start(strategy: str = "conservative", remote_url: str = ""):
-    return get_worker().icarus_start(strategy=strategy, remote_url=remote_url)
+@app.post("/bot/icarus/start", response_model=IcarusStartResponse)
+async def icarus_start(req: IcarusStartRequest):
+    return get_worker().icarus_start(strategy=req.strategy, remote_url=req.remote_url)
 
 
 @app.get("/bot/icarus/status")
@@ -352,7 +412,7 @@ async def icarus_status():
     return get_worker().icarus_status()
 
 
-@app.post("/bot/icarus/cycle")
+@app.post("/bot/icarus/cycle", response_model=IcarusCycleResponse)
 async def icarus_cycle():
     return get_worker().icarus_cycle()
 
@@ -360,10 +420,10 @@ async def icarus_cycle():
 # ─── Simulation Control ──────────────────────────────────────
 
 @app.post("/simulation/start")
-async def start_simulation(speed: float = 1.0):
+async def start_simulation(req: SimulationStartRequest = Body(default=SimulationStartRequest())):
     w = get_worker()
-    w.send_command("start", speed=speed)
-    return {"status": "started", "speed": speed}
+    w.send_command("start", speed=req.speed)
+    return {"status": "started", "speed": req.speed}
 
 
 @app.post("/simulation/stop")
@@ -380,10 +440,10 @@ async def reset_simulation():
     return {"status": "reset"}
 
 
-@app.get("/simulation/config")
+@app.get("/simulation/config", response_model=SimulationConfigResponse)
 async def get_config():
     if config is None:
-        return {}
+        return {"world": {}}
     return {
         "world": {
             "initial_population": config.world.initial_population,
@@ -420,12 +480,12 @@ async def audit_events_range(start_tick: int, end_tick: int):
     return get_worker().audit_range(start_tick=start_tick, end_tick=end_tick)
 
 
-@app.get("/audit/stats")
+@app.get("/audit/stats", response_model=AuditStatsResponse)
 async def audit_stats():
     return get_worker().audit_stats()
 
 
-@app.get("/audit/replay-status")
+@app.get("/audit/replay-status", response_model=AuditReplayStatusResponse)
 async def audit_replay_status():
     return {
         "authoritative_source": "worker_process",
@@ -437,7 +497,7 @@ async def audit_replay_status():
 
 # ─── News ────────────────────────────────────────────────────
 
-@app.get("/news")
+@app.get("/news", response_model=NewsListResponse)
 async def news_list(category: Optional[str] = None,
                     severity: Optional[str] = None,
                     limit: int = 20, offset: int = 0):
@@ -446,12 +506,12 @@ async def news_list(category: Optional[str] = None,
     )
 
 
-@app.get("/news/latest")
+@app.get("/news/latest", response_model=NewsListResponse)
 async def news_latest(n: int = 10):
     return get_worker().news_latest(n=n)
 
 
-@app.get("/news/{article_id}")
+@app.get("/news/{article_id}", response_model=Optional[NewsArticleResponse])
 async def news_detail(article_id: str):
     result = get_worker().news_detail(article_id=article_id)
     if result is None:

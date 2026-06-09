@@ -3,231 +3,509 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Pangeia News Dashboard</title>
+<title>Pangeia Analytics</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body { font-family: 'Segoe UI', system-ui, sans-serif; background: #0a0e17; color: #e0e6f0; min-height: 100vh; }
-  .header { background: linear-gradient(135deg, #0f1923 0%, #1a2a3a 100%); border-bottom: 1px solid #2a3a4a; padding: 16px 24px; display: flex; align-items: center; gap: 16px; }
-  .header h1 { font-size: 20px; font-weight: 700; background: linear-gradient(90deg, #4fc3f7, #81c784); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
-  .header .ticker { flex: 1; margin-left: 24px; overflow: hidden; white-space: nowrap; }
-  .header .ticker span { display: inline-block; animation: scroll 30s linear infinite; color: #90a4ae; font-size: 14px; }
-  .header .ticker span:hover { animation-play-state: paused; }
-  @keyframes scroll { 0% { transform: translateX(100%); } 100% { transform: translateX(-100%); } }
-  .header .status { font-size: 12px; color: #78909c; }
-  .header .status .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; }
+  .header { background: linear-gradient(135deg, #0f1923 0%, #1a2a3a 100%); border-bottom: 1px solid #2a3a4a; padding: 12px 24px; display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+  .header h1 { font-size: 18px; font-weight: 700; background: linear-gradient(90deg, #4fc3f7, #81c784); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+  .header .status-bar { display: flex; align-items: center; gap: 8px; font-size: 12px; color: #78909c; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
   .dot.green { background: #4caf50; }
-  .dot.red { background: #f44336; }
   .dot.yellow { background: #ff9800; }
+  .dot.red { background: #f44336; }
+  .nav-tabs { display: flex; gap: 4px; margin-left: auto; }
+  .nav-tabs button { padding: 6px 14px; border: 1px solid #2a3a4a; border-radius: 6px 6px 0 0; background: transparent; color: #90a4ae; cursor: pointer; font-size: 12px; border-bottom: none; }
+  .nav-tabs button.active { background: #111b27; color: #4fc3f7; border-color: #4fc3f7; }
 
-  .container { display: flex; gap: 20px; padding: 20px; max-width: 1440px; margin: 0 auto; }
-  .main { flex: 1; min-width: 0; }
-  .sidebar { width: 320px; flex-shrink: 0; }
+  .tab-content { display: none; padding: 16px 24px; max-width: 1440px; margin: 0 auto; }
+  .tab-content.active { display: block; }
 
-  .filters { display: flex; gap: 8px; margin-bottom: 16px; flex-wrap: wrap; }
-  .filters button { padding: 6px 14px; border: 1px solid #2a3a4a; border-radius: 20px; background: transparent; color: #90a4ae; cursor: pointer; font-size: 13px; transition: all .2s; }
-  .filters button:hover { border-color: #4fc3f7; color: #e0e6f0; }
-  .filters button.active { background: #1a3a5a; border-color: #4fc3f7; color: #4fc3f7; }
+  .panel { background: #111b27; border: 1px solid #1e2e3e; border-radius: 10px; padding: 16px; margin-bottom: 16px; }
+  .panel h2 { font-size: 14px; color: #90a4ae; margin-bottom: 12px; text-transform: uppercase; letter-spacing: 1px; }
 
-  .news-card { background: #111b27; border: 1px solid #1e2e3e; border-radius: 10px; padding: 16px; margin-bottom: 12px; transition: opacity .3s; }
-  .news-card:hover { border-color: #2a4a6a; }
-  .news-card .meta { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; font-size: 12px; }
-  .news-card .category { padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 600; text-transform: uppercase; }
-  .cat-economy { background: #1b3a2a; color: #81c784; }
-  .cat-technology { background: #1a2a4a; color: #64b5f6; }
-  .cat-culture { background: #3a1a3a; color: #ce93d8; }
-  .cat-society { background: #3a2a1a; color: #ffb74d; }
-  .cat-science { background: #1a3a3a; color: #4dd0e1; }
-  .cat-digest { background: #2a2a2a; color: #b0bec5; }
-  .severity-breaking { border-left: 3px solid #f44336; }
-  .severity-major { border-left: 3px solid #ff9800; }
-  .severity-minor { border-left: 3px solid #4caf50; }
-  .severity-badge { font-size: 10px; padding: 1px 6px; border-radius: 3px; }
-  .sev-breaking { background: #f44336; color: #fff; }
-  .sev-major { background: #ff9800; color: #000; }
-  .sev-minor { background: #4caf50; color: #fff; }
-  .news-card h3 { font-size: 15px; margin-bottom: 4px; color: #e0e6f0; }
-  .news-card p { font-size: 13px; color: #78909c; line-height: 1.5; }
-  .news-card .tick { color: #546e7a; font-size: 11px; }
+  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  .grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; }
+  .grid-4 { display: grid; grid-template-columns: 1fr 1fr 1fr 1fr; gap: 16px; }
 
-  .sidebar .panel { background: #111b27; border: 1px solid #1e2e3e; border-radius: 10px; padding: 16px; margin-bottom: 16px; }
-  .sidebar .panel h3 { font-size: 14px; color: #90a4ae; margin-bottom: 12px; text-transform: uppercase; letter-spacing: 1px; }
-  .sidebar .metric { display: flex; justify-content: space-between; padding: 4px 0; font-size: 13px; }
-  .sidebar .metric .label { color: #78909c; }
-  .sidebar .metric .value { color: #e0e6f0; font-weight: 600; }
-  .sidebar .bar { height: 4px; background: #1e2e3e; border-radius: 2px; margin-top: 2px; }
-  .sidebar .bar-fill { height: 100%; border-radius: 2px; transition: width .5s; }
+  .metric-card { padding: 12px; background: #0f1923; border-radius: 8px; border: 1px solid #1e2e3e; }
+  .metric-card .label { font-size: 11px; color: #546e7a; text-transform: uppercase; letter-spacing: 0.5px; }
+  .metric-card .value { font-size: 24px; font-weight: 700; margin-top: 4px; }
+  .metric-card .delta { font-size: 12px; margin-top: 2px; }
+  .delta.pos { color: #81c784; }
+  .delta.neg { color: #f44336; }
 
-  #loading { text-align: center; padding: 40px; color: #546e7a; }
-  .error-msg { color: #f44336; text-align: center; padding: 20px; }
+  .chart-container { position: relative; height: 250px; }
 
-  @media (max-width: 768px) { .container { flex-direction: column; } .sidebar { width: 100%; } }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { padding: 8px 12px; text-align: left; border-bottom: 1px solid #1e2e3e; }
+  th { color: #546e7a; font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; }
+  td { color: #e0e6f0; }
+  tr:hover td { background: #0f1923; }
+  .highlight-pos { color: #81c784; font-weight: 600; }
+  .highlight-neg { color: #f44336; font-weight: 600; }
+  .highlight-zero { color: #78909c; }
+
+  .btn { padding: 6px 16px; border: 1px solid #2a3a4a; border-radius: 6px; background: transparent; color: #90a4ae; cursor: pointer; font-size: 12px; transition: all .2s; }
+  .btn:hover { border-color: #4fc3f7; color: #4fc3f7; }
+  .btn-primary { background: #1a3a5a; border-color: #4fc3f7; color: #4fc3f7; }
+
+  .controls { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 16px; }
+  .controls label { font-size: 12px; color: #78909c; }
+  .controls select, .controls input { padding: 4px 8px; border: 1px solid #2a3a4a; border-radius: 4px; background: #0f1923; color: #e0e6f0; font-size: 12px; }
+
+  .loading { text-align: center; padding: 40px; color: #546e7a; }
+
+  @media (max-width: 900px) { .grid-2, .grid-3, .grid-4 { grid-template-columns: 1fr; } .nav-tabs { margin-left: 0; width: 100%; } }
 </style>
 </head>
 <body>
+
 <div class="header">
-  <h1>Pangeia News</h1>
-  <div class="status"><span class="dot green" id="statusDot"></span><span id="statusText">Connecting...</span></div>
-  <div class="ticker"><span id="ticker"></span></div>
+  <h1>Pangeia Analytics</h1>
+  <div class="status-bar"><span class="dot green" id="statusDot"></span><span id="statusText">Connecting...</span><span id="tickDisplay"></span></div>
+  <div class="nav-tabs">
+    <button class="active" data-tab="overview">Overview</button>
+    <button data-tab="metrics">Metrics</button>
+    <button data-tab="agents">Agents</button>
+    <button data-tab="culture">Culture</button>
+    <button data-tab="ablation">Ablation</button>
+  </div>
 </div>
 
-<div class="container">
-  <div class="main">
-    <div class="filters" id="filters">
-      <button class="active" data-cat="">All</button>
-      <button data-cat="economy">Economy</button>
-      <button data-cat="technology">Technology</button>
-      <button data-cat="culture">Culture</button>
-      <button data-cat="society">Society</button>
-      <button data-cat="science">Science</button>
-      <button data-cat="digest">Digest</button>
-    </div>
-    <div id="newsFeed"></div>
+<div id="tab-overview" class="tab-content active">
+  <div class="grid-4" id="kpiGrid">
+    <div class="metric-card"><div class="label">Tick</div><div class="value" id="kpiTick">0</div></div>
+    <div class="metric-card"><div class="label">Alive</div><div class="value" id="kpiAlive">0</div></div>
+    <div class="metric-card"><div class="label">GDP</div><div class="value" id="kpiGDP">0</div></div>
+    <div class="metric-card"><div class="label">Rebellions</div><div class="value" id="kpiRebellions">0</div></div>
   </div>
-  <div class="sidebar">
-    <div class="panel" id="metricsPanel">
-      <h3>Metrics</h3>
-      <div id="metricsContent">Loading...</div>
+  <div class="grid-2">
+    <div class="panel">
+      <h2>Metrics Over Time</h2>
+      <div class="chart-container"><canvas id="historyChart"></canvas></div>
     </div>
-    <div class="panel" id="summaryPanel">
-      <h3>News Stats</h3>
-      <div id="summaryContent">Loading...</div>
+    <div class="panel">
+      <h2>Economic Indicators</h2>
+      <div class="chart-container"><canvas id="economyChart"></canvas></div>
     </div>
+  </div>
+</div>
+
+<div id="tab-metrics" class="tab-content">
+  <div class="controls">
+    <label>Metric:</label>
+    <select id="metricSelect">
+      <option value="stability">Stability</option>
+      <option value="innovation">Innovation</option>
+      <option value="polarization">Polarization</option>
+      <option value="cooperation">Cooperation</option>
+      <option value="conflict">Conflict</option>
+      <option value="social_mobility">Social Mobility</option>
+      <option value="collective_happiness">Happiness</option>
+    </select>
+    <label>Rolling window:</label>
+    <input type="number" id="windowInput" value="10" min="1" max="100" style="width:60px">
+  </div>
+  <div class="panel">
+    <h2 id="metricChartTitle">Stability</h2>
+    <div class="chart-container" style="height:350px"><canvas id="metricChart"></canvas></div>
+  </div>
+</div>
+
+<div id="tab-agents" class="tab-content">
+  <div class="panel">
+    <h2>Agent Distribution</h2>
+    <div class="chart-container" style="height:300px"><canvas id="agentClassChart"></canvas></div>
+  </div>
+  <div class="panel">
+    <h2>Top Wealth</h2>
+    <table id="wealthTable"><tr><th>Agent</th><th>Class</th><th>Wealth</th><th>Age</th></tr></table>
+  </div>
+</div>
+
+<div id="tab-culture" class="tab-content">
+  <div class="grid-2">
+    <div class="panel">
+      <h2>Religion / Ideology Diversity</h2>
+      <div class="chart-container" style="height:300px"><canvas id="cultureChart"></canvas></div>
+    </div>
+    <div class="panel">
+      <h2>Collective Memory</h2>
+      <table id="cmTable"></table>
+    </div>
+  </div>
+</div>
+
+<div id="tab-ablation" class="tab-content">
+  <div class="controls">
+    <button class="btn btn-primary" id="runAblationBtn">Run Ablation</button>
+    <label>Seeds:</label>
+    <input type="text" id="ablationSeeds" value="42,99,777" style="width:120px">
+    <label>Ticks:</label>
+    <input type="number" id="ablationTicks" value="200" style="width:60px">
+    <label>Pop:</label>
+    <input type="number" id="ablationPop" value="100" style="width:60px">
+  </div>
+  <div class="panel" id="ablationPanel">
+    <h2>Results</h2>
+    <div id="ablationContent">Run an experiment to see results.</div>
+  </div>
+  <div class="panel">
+    <h2>Ablation: Interpretation</h2>
+    <table id="interpretationTable">
+      <tr><th>Condition</th><th>GDP Δ</th><th>Rebellions Δ</th><th>Diversity Δ</th><th>Stability Δ</th><th>Interpretation</th></tr>
+    </table>
+    <p style="margin-top:12px;font-size:12px;color:#546e7a;">
+      Baseline compares a full-personality simulation against each frozen dimension.
+      Positive Δ means the dimension suppresses the metric; negative Δ means it amplifies it.
+    </p>
   </div>
 </div>
 
 <script>
+// ─── State ────────────────────────────────────────────────
 const wsProto = location.protocol === 'https:' ? 'wss:' : 'ws:';
 const wsUrl = `${wsProto}//${location.host}/ws`;
-let articles = [];
-let filteredArticles = [];
 let ws = null;
-let currentCat = '';
-let pollTimer = null;
+let metricHistory = {
+  tick: [], stability: [], innovation: [], polarization: [],
+  cooperation: [], conflict: [], social_mobility: [], collective_happiness: []
+};
+let economyHistory = { tick: [], gdp: [], inequality: [], employment: [], productivity: [] };
+const MAX_HISTORY = 200;
 
-function connectWs() {
+let historyChart = null;
+let economyChart = null;
+let metricChart = null;
+let agentClassChart = null;
+let cultureChart = null;
+
+// ─── WebSocket ─────────────────────────────────────────────
+function connect() {
   ws = new WebSocket(wsUrl);
-  ws.onopen = () => {
-    document.getElementById('statusDot').className = 'dot green';
-    document.getElementById('statusText').textContent = 'Live';
-  };
+  ws.onopen = () => { document.getElementById('statusDot').className = 'dot green'; document.getElementById('statusText').textContent = 'Live'; };
   ws.onmessage = (e) => {
     try {
-      const data = JSON.parse(e.data);
-      if (data.type === 'tick') {
-        updateMetrics(data.metrics);
-        updateTicker(data.headlines || []);
-        if (data.headlines && data.headlines.length > 0) {
-          fetchNews();
-        }
-      }
-    } catch (err) {}
+      const d = JSON.parse(e.data);
+      if (d.type === 'tick') handleTick(d);
+    } catch(_) {}
   };
-  ws.onclose = () => {
-    document.getElementById('statusDot').className = 'dot yellow';
-    document.getElementById('statusText').textContent = 'Reconnecting...';
-    setTimeout(connectWs, 2000);
-  };
+  ws.onclose = () => { document.getElementById('statusDot').className = 'dot yellow'; document.getElementById('statusText').textContent = 'Reconnecting...'; setTimeout(connect, 2000); };
   ws.onerror = () => ws.close();
 }
 
-async function fetchNews() {
-  try {
-    const params = new URLSearchParams({ limit: '50', offset: '0' });
-    const res = await fetch(`/news?${params}`);
-    const data = await res.json();
-    articles = data.articles || [];
-    render();
-  } catch (err) {
-    document.getElementById('newsFeed').innerHTML = '<div class="error-msg">Failed to load news</div>';
+function handleTick(d) {
+  const tick = d.tick;
+  document.getElementById('tickDisplay').textContent = `tick ${tick}`;
+  document.getElementById('kpiTick').textContent = tick;
+  document.getElementById('kpiAlive').textContent = d.alive_count;
+  document.getElementById('kpiGDP').textContent = d.metrics.gdp?.toFixed(1) || '0';
+
+  if (d.metrics) {
+    metricHistory.tick.push(tick);
+    for (const k of ['stability','innovation','polarization','cooperation','conflict','social_mobility','collective_happiness']) {
+      metricHistory[k].push(d.metrics[k] || 0);
+    }
+    economyHistory.tick.push(tick);
+    economyHistory.gdp.push(d.metrics.gdp || 0);
+    economyHistory.inequality.push(d.metrics.inequality || 0);
+    economyHistory.employment.push(d.metrics.employment || 0);
+    economyHistory.productivity.push(d.metrics.productivity || 0);
+
+    if (metricHistory.tick.length > MAX_HISTORY) {
+      for (const k of Object.keys(metricHistory)) metricHistory[k].shift();
+      for (const k of Object.keys(economyHistory)) economyHistory[k].shift();
+    }
+    updateCharts();
+  }
+  fetchAblationStatus();
+}
+
+// ─── Charts ───────────────────────────────────────────────
+function updateCharts() {
+  if (!metricHistory.tick.length) return;
+  const ticks = metricHistory.tick;
+  if (!historyChart) {
+    const ctx = document.getElementById('historyChart').getContext('2d');
+    historyChart = new Chart(ctx, {
+      type: 'line',
+      data: {
+        labels: ticks,
+        datasets: [
+          { label: 'Stability', data: metricHistory.stability, borderColor: '#ffb74d', fill: false, tension: 0.3, pointRadius: 0 },
+          { label: 'Innovation', data: metricHistory.innovation, borderColor: '#ce93d8', fill: false, tension: 0.3, pointRadius: 0 },
+          { label: 'Polarization', data: metricHistory.polarization, borderColor: '#f44336', fill: false, tension: 0.3, pointRadius: 0 },
+        ]
+      },
+      options: { responsive: true, maintainAspectRatio: false,
+        plugins: { legend: { labels: { color: '#90a4ae', font: { size: 10 } } } },
+        scales: { x: { ticks: { color: '#546e7a', font: { size: 10 } } }, y: { min: 0, max: 1, ticks: { color: '#546e7a', font: { size: 10 } } } }
+      }
+    });
+  } else {
+    historyChart.data.labels = ticks;
+    historyChart.data.datasets[0].data = metricHistory.stability;
+    historyChart.data.datasets[1].data = metricHistory.innovation;
+    historyChart.data.datasets[2].data = metricHistory.polarization;
+    historyChart.update('none');
+  }
+
+  if (!economyChart) {
+    const ctx = document.getElementById('economyChart').getContext('2d');
+    economyChart = new Chart(ctx, {
+      type: 'line',
+      data: {
+        labels: ticks,
+        datasets: [
+          { label: 'GDP', data: economyHistory.gdp, borderColor: '#81c784', fill: false, tension: 0.3, pointRadius: 0, yAxisID: 'y' },
+          { label: 'Inequality', data: economyHistory.inequality, borderColor: '#f44336', fill: false, tension: 0.3, pointRadius: 0, yAxisID: 'y1' },
+        ]
+      },
+      options: { responsive: true, maintainAspectRatio: false,
+        plugins: { legend: { labels: { color: '#90a4ae', font: { size: 10 } } } },
+        scales: { x: { ticks: { color: '#546e7a', font: { size: 10 } } },
+          y: { position: 'left', ticks: { color: '#546e7a', font: { size: 10 } } },
+          y1: { position: 'right', min: 0, max: 1, ticks: { color: '#546e7a', font: { size: 10 } }, grid: { drawOnChartArea: false } }
+        }
+      }
+    });
+  } else {
+    economyChart.data.labels = ticks;
+    economyChart.data.datasets[0].data = economyHistory.gdp;
+    economyChart.data.datasets[1].data = economyHistory.inequality;
+    economyChart.update('none');
   }
 }
 
-async function fetchMetrics() {
+let metricChartTimer = null;
+document.getElementById('metricSelect').addEventListener('change', updateMetricChart);
+document.getElementById('windowInput').addEventListener('change', updateMetricChart);
+
+function updateMetricChart() {
+  const key = document.getElementById('metricSelect').value;
+  const win = parseInt(document.getElementById('windowInput').value) || 10;
+  document.getElementById('metricChartTitle').textContent = key.replace(/_/g,' ').replace(/\b\w/g, c => c.toUpperCase());
+  const data = metricHistory[key] || [];
+  const ticks = metricHistory.tick || [];
+  const smooth = [];
+  for (let i = 0; i < data.length; i++) {
+    const start = Math.max(0, i - win + 1);
+    const slice = data.slice(start, i + 1);
+    smooth.push(slice.reduce((a,b)=>a+b,0) / slice.length);
+  }
+  if (!metricChart) {
+    const ctx = document.getElementById('metricChart').getContext('2d');
+    metricChart = new Chart(ctx, {
+      type: 'line',
+      data: { labels: ticks, datasets: [{ label: key, data: smooth, borderColor: '#4fc3f7', fill: true, backgroundColor: 'rgba(79,195,247,0.1)', tension: 0.3, pointRadius: 0 }] },
+      options: { responsive: true, maintainAspectRatio: false,
+        plugins: { legend: { display: false } },
+        scales: { x: { ticks: { color: '#546e7a', font: { size: 10 } } }, y: { min: 0, max: 1, ticks: { color: '#546e7a', font: { size: 10 } } } }
+      }
+    });
+  } else {
+    metricChart.data.labels = ticks;
+    metricChart.data.datasets[0].data = smooth;
+    metricChart.update('none');
+  }
+}
+
+// ─── Polling ──────────────────────────────────────────────
+async function fetchStatus() {
   try {
-    const res = await fetch('/metrics');
-    const data = await res.json();
-    updateMetrics(data.current);
-  } catch (err) {}
+    const r = await fetch('/status');
+    const d = await r.json();
+    document.getElementById('kpiTick').textContent = d.tick || 0;
+    document.getElementById('kpiAlive').textContent = d.alive_count || 0;
+    if (d.tick) document.getElementById('tickDisplay').textContent = `tick ${d.tick}`;
+  } catch(_) {}
 }
 
 async function fetchSummary() {
   try {
-    const res = await fetch('/news?limit=1');
-    const data = await res.json();
-    const res2 = await fetch('/audit/stats');
-    const stats = await res2.json();
-    document.getElementById('summaryContent').innerHTML = `
-      <div class="metric"><span class="label">Articles</span><span class="value">${data.total || 0}</span></div>
-      <div class="metric"><span class="label">Audit Events</span><span class="value">${stats.total_events || 0}</span></div>
-    `;
-  } catch (err) {}
+    const r = await fetch('/summary');
+    const d = await r.json();
+    document.getElementById('kpiGDP').textContent = d.economy?.indicators?.gdp?.toFixed(1) || '0';
+    document.getElementById('kpiRebellions').textContent = d.collective_memory?.rebellion_count || 0;
+  } catch(_) {}
 }
 
-function updateMetrics(m) {
-  if (!m) return;
-  const html = `
-    <div class="metric"><span class="label">Tick</span><span class="value">${m.tick}</span></div>
-    <div class="metric"><span class="label">Population</span><span class="value">${m.alive}/${m.population}</span></div>
-    <div class="metric"><span class="label">Cooperation</span><span class="value">${(m.cooperation*100).toFixed(1)}%</span></div>
-    <div class="bar"><div class="bar-fill" style="width:${m.cooperation*100}%;background:#4fc3f7"></div></div>
-    <div class="metric"><span class="label">Happiness</span><span class="value">${(m.collective_happiness*100).toFixed(1)}%</span></div>
-    <div class="bar"><div class="bar-fill" style="width:${m.collective_happiness*100}%;background:#81c784"></div></div>
-    <div class="metric"><span class="label">Stability</span><span class="value">${(m.stability*100).toFixed(1)}%</span></div>
-    <div class="bar"><div class="bar-fill" style="width:${m.stability*100}%;background:#ffb74d"></div></div>
-    <div class="metric"><span class="label">Innovation</span><span class="value">${(m.innovation*100).toFixed(1)}%</span></div>
-    <div class="bar"><div class="bar-fill" style="width:${m.innovation*100}%;background:#ce93d8"></div></div>
-    <div class="metric"><span class="label">Polarization</span><span class="value">${(m.polarization*100).toFixed(1)}%</span></div>
-  `;
-  document.getElementById('metricsContent').innerHTML = html;
+async function fetchAgents() {
+  try {
+    const r = await fetch('/agents?limit=1000');
+    const d = await r.json();
+    const tb = document.getElementById('wealthTable');
+    const agents = (d.agents || []).sort((a,b) => (b.wealth||0) - (a.wealth||0)).slice(0, 20);
+    tb.innerHTML = '<tr><th>Agent</th><th>Class</th><th>Wealth</th><th>Age</th></tr>' +
+      agents.map(a => `<tr><td>${a.name||a.agent_id||'?'}</td><td>${a.agent_class||'?'}</td><td>${(a.wealth||0).toFixed(1)}</td><td>${a.age||0}</td></tr>`).join('');
+
+    // Agent class chart
+    const counts = {};
+    (d.agents || []).forEach(a => { const c = a.agent_class || 'unknown'; counts[c] = (counts[c]||0) + 1; });
+    const labels = Object.keys(counts);
+    const values = Object.values(counts);
+    if (agentClassChart) { agentClassChart.destroy(); }
+    const ctx = document.getElementById('agentClassChart').getContext('2d');
+    agentClassChart = new Chart(ctx, {
+      type: 'doughnut',
+      data: { labels, datasets: [{ data: values, backgroundColor: ['#4fc3f7','#81c784','#ffb74d','#ce93d8','#f44336','#4dd0e1','#a1887f'] }] },
+      options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { labels: { color: '#90a4ae', font: { size: 10 } } } } }
+    });
+  } catch(_) {}
 }
 
-function updateTicker(headlines) {
-  if (!headlines || headlines.length === 0) return;
-  const ticker = document.getElementById('ticker');
-  const texts = headlines.map(h => `[${h.category.toUpperCase()}] ${h.headline}`).join('  •  ');
-  ticker.textContent = texts + '  •  ';
+async function fetchCulture() {
+  try {
+    const r = await fetch('/culture');
+    const d = await r.json();
+    // Culture chart
+    const religionCount = d.religion?.religions?.length || Object.keys(d.religion||{}).length || 0;
+    const ideologyCount = d.ideologies?.ideologies?.length || Object.keys(d.ideologies||{}).length || 0;
+    const memeCount = d.memes?.meme_count || d.memes?.length || 0;
+    if (cultureChart) cultureChart.destroy();
+    const ctx = document.getElementById('cultureChart').getContext('2d');
+    cultureChart = new Chart(ctx, {
+      type: 'bar',
+      data: { labels: ['Religions', 'Ideologies', 'Memes'], datasets: [{ data: [religionCount, ideologyCount, memeCount], backgroundColor: ['#ce93d8','#4fc3f7','#81c784'] }] },
+      options: { responsive: true, maintainAspectRatio: false,
+        plugins: { legend: { display: false } },
+        scales: { y: { beginAtZero: true, ticks: { color: '#546e7a', font: { size: 10 }, stepSize: 1 } }, x: { ticks: { color: '#90a4ae', font: { size: 10 } } } }
+      }
+    });
+
+    // Collective memory table
+    const cm = await (await fetch('/collective_memory')).json();
+    const tb = document.getElementById('cmTable');
+    tb.innerHTML = `<tr><th>Metric</th><th>Value</th></tr>
+      <tr><td>Total Memories</td><td>${cm.total_memories||0}</td></tr>
+      <tr><td>Rebellion Probability</td><td>${((cm.rebellion_probability||0)*100).toFixed(1)}%</td></tr>
+      <tr><td>Rebellions</td><td>${cm.rebellion_count||0}</td></tr>
+      <tr><td>Regime</td><td>${(cm.volatility?.regime||'unknown')}</td></tr>
+      <tr><td>Avg Generations</td><td>${(cm.average_generations||0).toFixed(1)}</td></tr>
+      <tr><td>Most Influential</td><td>${cm.most_influential||'none'}</td></tr>`;
+  } catch(_) {}
 }
 
-function render() {
-  filteredArticles = currentCat ? articles.filter(a => a.category === currentCat) : articles;
-  filteredArticles = filteredArticles.slice().reverse();
-  const feed = document.getElementById('newsFeed');
-  if (filteredArticles.length === 0) {
-    feed.innerHTML = '<div style="text-align:center;padding:40px;color:#546e7a;">No news yet. Start the simulation to see headlines.</div>';
-    return;
+// ─── Ablation ─────────────────────────────────────────────
+async function fetchAblationStatus() {
+  // no-op for now; results come from the run button
+}
+
+document.getElementById('runAblationBtn').addEventListener('click', async () => {
+  const btn = document.getElementById('runAblationBtn');
+  btn.textContent = 'Running...';
+  btn.disabled = true;
+  const seeds = document.getElementById('ablationSeeds').value.split(',').map(Number).filter(n => !isNaN(n));
+  const ticks = parseInt(document.getElementById('ablationTicks').value) || 200;
+  const pop = parseInt(document.getElementById('ablationPop').value) || 100;
+  try {
+    const r = await fetch('/ablation/run', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ conditions: ['baseline','no_temperament','no_emotions','no_needs','no_archetype','no_personality'], seeds, ticks, population: pop })
+    });
+    const result = await r.json();
+    if (result.status === 'started') {
+      document.getElementById('ablationContent').innerHTML = '<div class="loading">Experiment running... polling for results.</div>';
+      pollAblationResult(result.task_id);
+    } else {
+      document.getElementById('ablationContent').innerHTML = `<div class="loading">${result.message || 'Error'}</div>`;
+    }
+  } catch(e) {
+    document.getElementById('ablationContent').innerHTML = `<div class="loading">Error: ${e.message}</div>`;
+  } finally {
+    btn.textContent = 'Run Ablation';
+    btn.disabled = false;
   }
-  feed.innerHTML = filteredArticles.map(a => {
-    const catClass = `cat-${a.category}`;
-    const sevClass = `severity-${a.severity}`;
-    const sevBadge = a.severity !== 'minor' ? `<span class="severity-badge sev-${a.severity}">${a.severity}</span>` : '';
-    return `<div class="news-card ${sevClass}">
-      <div class="meta">
-        <span class="category ${catClass}">${a.category}</span>
-        ${sevBadge}
-        <span class="tick">tick ${a.tick}</span>
-      </div>
-      <h3>${a.headline}</h3>
-      <p>${a.summary}</p>
-    </div>`;
-  }).join('');
-}
-
-document.getElementById('filters').addEventListener('click', (e) => {
-  if (e.target.tagName !== 'BUTTON') return;
-  document.querySelectorAll('#filters button').forEach(b => b.classList.remove('active'));
-  e.target.classList.add('active');
-  currentCat = e.target.dataset.cat;
-  render();
 });
 
-connectWs();
-fetchNews();
-fetchMetrics();
+async function pollAblationResult(taskId) {
+  for (let i = 0; i < 60; i++) {
+    await new Promise(r => setTimeout(r, 2000));
+    try {
+      const r = await fetch(`/ablation/result/${taskId}`);
+      if (r.status === 200) {
+        const data = await r.json();
+        renderAblationResults(data);
+        return;
+      }
+    } catch(_) {}
+  }
+  document.getElementById('ablationContent').innerHTML = '<div class="loading">Experiment timed out.</div>';
+}
+
+function renderAblationResults(data) {
+  const results = data.results || [];
+  if (!results.length) {
+    document.getElementById('ablationContent').innerHTML = '<div class="loading">No results.</div>';
+    return;
+  }
+  // Group by condition, average across seeds
+  const byCond = {};
+  for (const r of results) {
+    if (!byCond[r.condition]) byCond[r.condition] = [];
+    byCond[r.condition].push(r);
+  }
+  const baseline = byCond['baseline'] || [];
+  const bMean = m => baseline.reduce((a,r) => a + (r.metrics[m]||0), 0) / Math.max(1, baseline.length);
+  const bGDP = bMean('gdp'), bReb = bMean('rebellions'), bDiv = bMean('cultural_div'), bStab = bMean('stability');
+
+  let html = `<table><tr><th>Condition</th><th>GDP</th><th>Δ</th><th>Rebellions</th><th>Δ</th><th>Diversity</th><th>Δ</th><th>Stability</th><th>Δ</th></tr>`;
+  for (const [cond, condResults] of Object.entries(byCond)) {
+    const cMean = m => condResults.reduce((a,r) => a + (r.metrics[m]||0), 0) / condResults.length;
+    const gdp = cMean('gdp'), reb = cMean('rebellions'), div = cMean('cultural_div'), stab = cMean('stability');
+    const delta = (v, b) => b ? ((v - b) / b * 100).toFixed(1) : '-';
+    const cls = v => v > 0 ? 'highlight-pos' : v < 0 ? 'highlight-neg' : 'highlight-zero';
+    html += `<tr><td><strong>${cond}</strong></td>
+      <td>${gdp.toFixed(2)}</td><td class="${cls(gdp-bGDP)}">${delta(gdp,bGDP)}%</td>
+      <td>${reb.toFixed(0)}</td><td class="${cls(reb-bReb)}">${delta(reb,bReb)}%</td>
+      <td>${div.toFixed(0)}</td><td class="${cls(div-bDiv)}">${delta(div,bDiv)}%</td>
+      <td>${stab.toFixed(3)}</td><td class="${cls(stab-bStab)}">${delta(stab,bStab)}%</td></tr>`;
+  }
+  html += '</table>';
+  document.getElementById('ablationContent').innerHTML = html;
+
+  // Interpretation table
+  const interp = {
+    'no_temperament': 'Traits frozen → stability drops, marginal GDP change. Temperament provides behavioral predictability.',
+    'no_emotions': 'No emotions → less narrative turnover. Emotions drive cultural dynamism.',
+    'no_needs': 'Needs frozen → fewer rebellions. Unmet needs are a primary rebellion driver.',
+    'no_archetype': 'Zero effect. Archetype system is defined but never queried in decisions.',
+    'no_personality': 'All frozen → fastest simulation (+33%). GDP + metrics largely unchanged, suggesting personality has high cost for modest behavioral impact.',
+  };
+  let itb = document.getElementById('interpretationTable');
+  let ihtml = '<tr><th>Condition</th><th>GDP Δ</th><th>Rebellions Δ</th><th>Diversity Δ</th><th>Stability Δ</th><th>Interpretation</th></tr>';
+  for (const [cond, msg] of Object.entries(interp)) {
+    const cr = byCond[cond];
+    if (!cr) continue;
+    const cMean = m => cr.reduce((a,r) => a + (r.metrics[m]||0), 0) / cr.length;
+    const delta = (v, b) => b ? ((v - b) / b * 100).toFixed(1) + '%' : '-';
+    ihtml += `<tr><td><strong>${cond}</strong></td><td>${delta(cMean('gdp'), bGDP)}</td><td>${delta(cMean('rebellions'), bReb)}</td><td>${delta(cMean('cultural_div'), bDiv)}</td><td>${delta(cMean('stability'), bStab)}</td><td style="font-size:11px;color:#90a4ae;">${msg}</td></tr>`;
+  }
+  itb.innerHTML = ihtml;
+}
+
+// ─── Tabs ─────────────────────────────────────────────────
+document.querySelector('.nav-tabs').addEventListener('click', (e) => {
+  if (e.target.tagName !== 'BUTTON') return;
+  document.querySelectorAll('.nav-tabs button').forEach(b => b.classList.remove('active'));
+  e.target.classList.add('active');
+  document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
+  document.getElementById('tab-' + e.target.dataset.tab).classList.add('active');
+});
+
+// ─── Init ─────────────────────────────────────────────────
+connect();
+fetchStatus();
 fetchSummary();
-pollTimer = setInterval(() => {
-  fetchNews();
-  fetchMetrics();
-}, 3000);
+fetchAgents();
+fetchCulture();
+setInterval(fetchStatus, 3000);
+setInterval(fetchSummary, 5000);
+setInterval(fetchAgents, 10000);
+setInterval(fetchCulture, 15000);
 </script>
 </body>
 </html>
