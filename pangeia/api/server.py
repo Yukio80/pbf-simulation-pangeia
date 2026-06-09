@@ -5,7 +5,7 @@ import os
 import threading
 from typing import Optional, List
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -222,6 +222,27 @@ async def collective_memory_volatility():
 async def collective_memory_narratives(narrative_type: str):
     sim = get_sim()
     return [m.as_dict() for m in sim.collective_memory.get_memories(narrative_type=narrative_type)]
+
+
+@app.get("/collective_memory/identity")
+async def collective_memory_identity():
+    sim = get_sim()
+    return sim.collective_memory.identity().as_dict()
+
+
+@app.get("/collective_memory/actors")
+async def collective_memory_actors():
+    sim = get_sim()
+    return [a.as_dict() for a in sim.collective_memory.actors.values()]
+
+
+@app.get("/collective_memory/actors/{agent_id}")
+async def collective_memory_actor(agent_id: str):
+    sim = get_sim()
+    actor = sim.collective_memory.actors.get(agent_id)
+    if not actor:
+        raise HTTPException(status_code=404, detail="Actor not found")
+    return actor.as_dict()
 
 
 @app.post("/bot/register")

@@ -138,6 +138,52 @@ class Simulation:
                             company.hire(employee.agent_id)
                             employee.state.employer_id = company.id
 
+        self._register_narrative_actors()
+
+    def _register_narrative_actors(self):
+        """Registra agentes influentes como NarrativeActors.
+
+        Sacerdotes, professores, governantes, artistas, jornalistas,
+        filósofos — classes que moldam ativamente a disputa cultural.
+        """
+        # Remove atores mortos
+        dead_ids = [aid for aid, a in self.agents.items()
+                    if not a.state.is_alive and aid in self.collective_memory.actors]
+        for aid in dead_ids:
+            self.collective_memory.remove_actor(aid)
+
+        actor_configs = {
+            "governor":    {"influence": 0.7, "ideology": "conservative", "charisma": 0.6},
+            "journalist":  {"influence": 0.5, "ideology": "neutral",      "charisma": 0.5},
+            "philosopher": {"influence": 0.6, "ideology": "progressive",  "charisma": 0.4},
+            "researcher":  {"influence": 0.4, "ideology": "progressive",  "charisma": 0.3},
+            "military":    {"influence": 0.5, "ideology": "conservative", "charisma": 0.6},
+        }
+        narrative_map = {
+            "governor":    "foundational",
+            "journalist":  "reformist",
+            "philosopher": "reformist",
+            "researcher":  "reformist",
+            "military":    "foundational",
+        }
+        for agent in self.agents.values():
+            if not agent.state.is_alive:
+                continue
+            cls = agent.state.agent_class
+            if cls in actor_configs and agent.agent_id not in self.collective_memory.actors:
+                cfg = actor_configs[cls]
+                audience = len(agent.social.relationships) + int(agent.state.influence * 10)
+                self.collective_memory.register_actor(
+                    agent_id=agent.agent_id,
+                    name=agent.state.name,
+                    agent_class=cls,
+                    influence=cfg["influence"],
+                    audience=audience,
+                    ideology=cfg["ideology"],
+                    charisma=cfg["charisma"] + agent.state.influence * 0.3,
+                    preferred_narrative_type=narrative_map[cls],
+                )
+
     def _initialize_stratification(self):
         self.stratification.assign_classes(self.agents)
 
@@ -364,6 +410,19 @@ class Simulation:
                     religion_id=rel.name,
                     importance=0.6,
                 )
+
+        # Atualiza atores narrativos
+        cm.actor_step(tick)
+        # Re-registra atores periodicamente (audience muda)
+        if tick > 0 and tick % 50 == 0:
+            self._register_narrative_actors()
+        # Computa identidade da civilização
+        total_techs = len(self.technology.technologies) if self.technology else 1
+        discovered = sum(
+            1 for t in (self.technology.technologies.values() if self.technology else [])
+            if t.discovered
+        )
+        cm.compute_identity(tech_discovered=discovered, total_techs=total_techs)
 
     def _record_narratives_for_events(self):
         if not hasattr(self, '_last_narrated_ids'):

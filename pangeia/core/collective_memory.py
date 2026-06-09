@@ -243,8 +243,179 @@ class HistoricalVolatility:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# Perfil emocional helper
+# NarrativeActor — agentes que promovem/atacam narrativas
 # ═══════════════════════════════════════════════════════════════════════════════
+
+@dataclass
+class NarrativeActor:
+    """Um agente que participa ativamente da disputa cultural.
+
+    Narrativas não se espalham porque existem — espalham-se porque
+    alguém as promove. Um ator com alta influência e carisma pode
+    tornar dominante uma narrativa mediana; um ator isolado pode
+    ter a melhor ideia da história e ninguém ouvir.
+    """
+    agent_id: str
+    name: str
+    agent_class: str
+    influence: float = 0.5
+    audience: int = 0
+    ideology: str = "neutral"  # conservative | progressive | traditional | revolutionary
+    charisma: float = 0.5
+    preferred_narrative_type: str = "foundational"
+    promoted_memories: List[str] = field(default_factory=list)
+    attack_count: int = 0
+    promote_count: int = 0
+
+    def effective_power(self) -> float:
+        return self.influence * self.charisma * (1 + math.log10(max(1, self.audience)))
+
+    def promote(self, memory: CollectiveMemory, cm_system: CollectiveMemorySystem) -> float:
+        """Promove uma narrativa, aumentando sua dominância e importância.
+
+        Retorna o quanto foi impulsionado (impacto).
+        """
+        power = self.effective_power()
+        impact = power * 0.05
+        memory.dominance = min(1.0, memory.dominance + impact)
+        memory.importance = min(1.0, memory.importance + impact * 0.5)
+        cm_system.cite(memory.event_id)
+        self.promoted_memories.append(memory.event_id)
+        self.promote_count += 1
+        return impact
+
+    def attack(self, memory: CollectiveMemory, cm_system: CollectiveMemorySystem) -> float:
+        """Ataca uma narrativa, reduzindo sua dominância."""
+        power = self.effective_power()
+        impact = power * 0.03
+        memory.dominance = max(0.0, memory.dominance - impact)
+        memory.importance = max(0.0, memory.importance - impact * 0.5)
+        self.attack_count += 1
+        return impact
+
+    def as_dict(self) -> dict:
+        return {
+            "agent_id": self.agent_id,
+            "name": self.name,
+            "class": self.agent_class,
+            "influence": round(self.influence, 3),
+            "audience": self.audience,
+            "ideology": self.ideology,
+            "charisma": round(self.charisma, 3),
+            "effective_power": round(self.effective_power(), 3),
+            "promote_count": self.promote_count,
+            "attack_count": self.attack_count,
+        }
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# CivilizationIdentity — perfil auto-computado da civilização
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@dataclass
+class CivilizationIdentity:
+    """Identidade cultural da civilização, derivada automaticamente
+    das memórias coletivas, instituições, emoções e narrativas vigentes.
+
+    NÃO é um label fixo — emerge do estado atual do sistema e pode
+    ser observado evoluindo ao longo dos ticks.
+
+    Dimensões (0-1):
+      - religiosity: peso de memórias religiosas + espiritualidade
+      - militarism:  peso de memórias de guerra/conflito + agressividade
+      - individualism: liberdade vs. coletivismo (inverso de belonging)
+      - traditionalism: forca de memórias foundational + mitos
+      - innovation: taxa de descobertas + curiosidade coletiva
+      - pluralism: diversidade de narrative_types ativos
+    """
+    religiosity: float = 0.5
+    militarism: float = 0.5
+    individualism: float = 0.5
+    traditionalism: float = 0.5
+    innovation: float = 0.5
+    pluralism: float = 0.5
+
+    def compute(self, mems: List[CollectiveMemory],
+                volatility: HistoricalVolatility,
+                avg_emotional_bias: Dict[str, float],
+                tech_discovered: int = 0,
+                total_techs: int = 1) -> "CivilizationIdentity":
+        total = len(mems)
+        if total == 0:
+            return self
+
+        # Religiosity: memórias religiosas + espiritualidade emocional
+        religious_mems = sum(1 for m in mems if m.religion_id is not None or "religi" in m.event_type.lower())
+        self.religiosity = min(1.0, religious_mems / max(1, total) * 3 +
+                               abs(avg_emotional_bias.get("trust", 0)))
+
+        # Militarism: guerra, conflito, agressão
+        war_mems = sum(1 for m in mems if m.event_type in ("war", "natural_disaster", "aggression"))
+        self.militarism = min(1.0, war_mems / max(1, total) * 4 +
+                              abs(avg_emotional_bias.get("anger", 0)))
+
+        # Individualism: baseado em polarização emocional (↑ = mais individualista)
+        self.individualism = min(1.0, 0.3 + volatility.emotional_polarization * 1.5)
+
+        # Traditionalism: proporção de foundational + myths
+        traditional = sum(1 for m in mems if m.narrative_type in ("foundational", "myth"))
+        self.traditionalism = min(1.0, traditional / max(1, total) * 1.5)
+
+        # Innovation: tech level + curiosity emocional
+        tech_factor = tech_discovered / max(1, total_techs)
+        curiosity = abs(avg_emotional_bias.get("curiosity", 0.3))
+        self.innovation = min(1.0, tech_factor * 0.6 + curiosity * 0.4)
+
+        # Pluralism: diversidade de narrative_types ativos
+        types = set(m.narrative_type for m in mems)
+        self.pluralism = min(1.0, len(types) / 4.0)
+
+        return self
+
+    def dominant_tendency(self) -> str:
+        """Retorna o traço dominante da civilização."""
+        traits = [
+            ("religiosa", self.religiosity),
+            ("militarista", self.militarism),
+            ("individualista", self.individualism),
+            ("tradicionalista", self.traditionalism),
+            ("inovadora", self.innovation),
+            ("plural", self.pluralism),
+        ]
+        return max(traits, key=lambda x: x[1])[0]
+
+    def as_dict(self) -> dict:
+        return {
+            "religiosity": round(self.religiosity, 3),
+            "militarism": round(self.militarism, 3),
+            "individualism": round(self.individualism, 3),
+            "traditionalism": round(self.traditionalism, 3),
+            "innovation": round(self.innovation, 3),
+            "pluralism": round(self.pluralism, 3),
+            "dominant_tendency": self.dominant_tendency(),
+        }
+
+    @classmethod
+    def divergence_report(cls, identities: List["CivilizationIdentity"]) -> dict:
+        """Compara múltiplas civilizações e mede divergência entre elas."""
+        if not identities:
+            return {}
+        dims = ["religiosity", "militarism", "individualism", "traditionalism", "innovation", "pluralism"]
+        report = {}
+        for dim in dims:
+            vals = [getattr(i, dim) for i in identities]
+            mean_v = sum(vals) / len(vals)
+            variance = sum((v - mean_v) ** 2 for v in vals) / len(vals)
+            report[dim] = {
+                "mean": round(mean_v, 3),
+                "std": round(math.sqrt(variance), 3),
+                "min": round(min(vals), 3),
+                "max": round(max(vals), 3),
+            }
+        report["avg_divergence"] = round(
+            sum(report[d]["std"] for d in dims) / len(dims), 3
+        )
+        return report
 
 def merge_emotional_profiles(
     event_type: str,
@@ -276,6 +447,8 @@ class CollectiveMemorySystem:
         self._rebellion_increment = rebellion_increment
         self._rebellion_count: int = 0
         self._volatility = HistoricalVolatility()
+        self._identity = CivilizationIdentity()
+        self.actors: Dict[str, NarrativeActor] = {}
         self.rng = rng or random.Random()
 
     def add_memory(
@@ -438,6 +611,82 @@ class CollectiveMemorySystem:
                 m.citation_count += 1
                 break
 
+    def register_actor(self, agent_id: str, name: str, agent_class: str,
+                       influence: float = 0.5, audience: int = 0,
+                       ideology: str = "neutral", charisma: float = 0.5,
+                       preferred_narrative_type: str = "foundational") -> NarrativeActor:
+        actor = NarrativeActor(
+            agent_id=agent_id, name=name, agent_class=agent_class,
+            influence=influence, audience=audience, ideology=ideology,
+            charisma=charisma, preferred_narrative_type=preferred_narrative_type,
+        )
+        self.actors[agent_id] = actor
+        return actor
+
+    def remove_actor(self, agent_id: str):
+        self.actors.pop(agent_id, None)
+
+    def actor_step(self, tick: int):
+        """Cada ator narrativo, a cada tick, promove ou ataca memórias.
+
+        - Ataca narrativas contrárias à sua ideology
+        - Promove narrativas alinhadas à sua ideology
+        - Se não houver alvo, não faz nada (silêncio também é escolha)
+        """
+        if not self.actors or not self.memories:
+            return
+
+        # Mapa: ideology → preferred_narrative_types preferidos
+        _IDEO_NARRATIVE_MAP: Dict[str, List[str]] = {
+            "conservative": ["foundational", "myth"],
+            "traditional": ["foundational", "myth"],
+            "progressive": ["reformist"],
+            "revolutionary": ["revolutionary"],
+            "neutral": ["foundational", "reformist", "myth"],
+        }
+
+        # Mapa: ideology → narrative_types que ataca
+        _ATTACK_MAP: Dict[str, List[str]] = {
+            "conservative": ["revolutionary", "reformist"],
+            "traditional": ["revolutionary"],
+            "progressive": ["foundational", "myth"],
+            "revolutionary": ["foundational", "myth"],
+            "neutral": [],
+        }
+
+        for actor in self.actors.values():
+            if self.rng.random() > 0.15:  # 15% de chance de agir por tick
+                continue
+
+            promote_types = _IDEO_NARRATIVE_MAP.get(actor.ideology, ["foundational"])
+            attack_types = _ATTACK_MAP.get(actor.ideology, [])
+
+            # Escolhe: promover ou atacar (60% promover, 40% atacar)
+            if self.rng.random() < 0.6:
+                candidates = [m for m in self.memories if m.narrative_type in promote_types]
+                if candidates:
+                    target = self.rng.choice(candidates)
+                    actor.promote(target, self)
+                    self.cite(target.event_id)
+            else:
+                candidates = [m for m in self.memories if m.narrative_type in attack_types]
+                if candidates:
+                    target = self.rng.choice(candidates)
+                    actor.attack(target, self)
+
+    def compute_identity(self, tech_discovered: int = 0, total_techs: int = 1) -> CivilizationIdentity:
+        """Atualiza e retorna a identidade atual da civilização."""
+        vol = self.volatility(0)
+        bias = self.get_emotional_bias()
+        self._identity.compute(
+            self.memories, vol, bias,
+            tech_discovered=tech_discovered, total_techs=total_techs,
+        )
+        return self._identity
+
+    def identity(self) -> CivilizationIdentity:
+        return self._identity
+
     def volatility(self, tick: int) -> HistoricalVolatility:
         self._volatility.compute(self, tick)
         return self._volatility
@@ -457,6 +706,9 @@ class CollectiveMemorySystem:
             "rebellion_probability": round(self.rebellion_probability, 3),
             "dominance_history": [round(d, 3) for d in self._parent_dominance_history[-10:]],
             "volatility": vol.as_dict(),
+            "identity": self._identity.as_dict(),
+            "actors": len(self.actors),
+            "actor_details": [a.as_dict() for a in self.actors.values()],
             "most_influential": [m.as_dict() for m in self.most_influential(5)],
             "average_generations": (
                 sum(m.generations_passed for m in self.memories) / max(1, total)
