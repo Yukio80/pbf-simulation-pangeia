@@ -1,12 +1,13 @@
-"""Harness para rodar os 5 cenários de comparação do subsistema Bolsa Família
+"""Harness para rodar os 6 cenários de comparação do subsistema Bolsa Família
 no Pangeia e exportar séries temporais para CSV.
 
 Cenários:
-  1) Baseline        - social_welfare desativado
-  2) PBF padrão      - parâmetros calibrados
-  3a) Corte abrupto  - graduação sem transição
-  3b) Corte gradual  - graduação com taper
-  4)  Subfinanciado  - tax_surcharge insuficiente
+  1) Baseline         - social_welfare desativado
+  2) PBF padrão       - parâmetros calibrados
+  3a) Corte abrupto   - graduação sem transição
+  3b) Corte gradual   - graduação com taper
+  4)  Subfinanciado   - tax_surcharge insuficiente
+  5)  Capital returns - elite com retorno proporcional ao patrimônio (1%/tick)
 """
 
 import csv
@@ -16,54 +17,42 @@ import random
 from pangeia.config import SimulationConfig
 from pangeia.simulation import Simulation
 
-# ----------------------------------------------------------------------
-# Configuração geral
-# ----------------------------------------------------------------------
-
 N_TICKS = 500
 OUTPUT_DIR = "scenario_outputs"
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
-# ----------------------------------------------------------------------
-# Distribuição inicial de riqueza
-# ----------------------------------------------------------------------
 
-
-def distribute_initial_wealth(sim: Simulation, cfg: SimulationConfig) -> None:
-    """Substitui a riqueza uniforme dos agentes por uma distribuição
-    exponencial (Pareto-like) para gerar pobres, classe média e elite.
-
-    A distribuição segue uma exponencial com média 'mean' e piso 'floor',
-    mais um punhado de agentes muito ricos (cauda longa).
-    """
+def distribute_initial_wealth(sim, cfg):
     agents = list(sim.agents.values())
-    seed = cfg.world.seed
-    rng = random.Random(seed + 999)
-
-    mean = 120.0
-    floor = 5.0
-
+    rng = random.Random(cfg.world.seed + 999)
+    mean = 120.0; floor = 5.0
     for agent in agents:
         raw = rng.expovariate(1.0 / mean)
-        wealth = floor + raw
-
-        # cauda longa: ~5% ganham um boost extra (elite)
-        if rng.random() < 0.05:
-            wealth *= 1.5 + rng.random() * 2.0
-        # ~15% ficam na miséria (reforço da cauda inferior)
-        if rng.random() < 0.15:
-            wealth = floor + rng.random() * 15.0
-
-        agent.state.wealth = wealth
-
-    # Sincroniza o AgentArray (se existir)
+        w = floor + raw
+        if rng.random() < 0.05: w *= 1.5 + rng.random() * 2.0
+        if rng.random() < 0.15: w = floor + rng.random() * 15.0
+        agent.state.wealth = w
     if hasattr(sim, "agent_array") and sim.agent_array is not None:
         sim.agent_array.sync_from_agents(sim.agents)
 
 
-# ----------------------------------------------------------------------
-# Definição dos cenários
-# ----------------------------------------------------------------------
+def apply_capital_returns(sim):
+    """Aplica retorno proporcional ao patrimônio por faixa de riqueza.
+    Wealth >= 500 (elite): 1%/tick  (~12,7% a.a. se tick ~ mês)
+    Wealth 200-499 (média-alta): 0,3%/tick (~3,7% a.a.)
+    Wealth < 200: 0%
+    """
+    for agent in sim.agents.values():
+        if not agent.state.is_alive or agent.state.wealth <= 0:
+            continue
+        w = agent.state.wealth
+        if w >= 500:
+            rate = 0.01
+        elif w >= 200:
+            rate = 0.003
+        else:
+            continue
+        agent.state.wealth += w * rate
 
 
 def build_config(scenario: str) -> SimulationConfig:
@@ -97,6 +86,12 @@ def build_config(scenario: str) -> SimulationConfig:
         cfg.social_welfare.graduation_transition_band = 0.1
         cfg.social_welfare.funding_tax_surcharge = 0.01
 
+    elif scenario in ("5a_capital_return_5pct", "5b_capital_return_1pct"):
+        cfg.social_welfare.graduation_mode = "gradual"
+        cfg.social_welfare.graduation_transition_band = 0.1
+        if scenario == "5b_capital_return_1pct":
+            cfg.social_welfare.funding_tax_surcharge = 0.01
+
     else:
         raise ValueError(f"Cenário desconhecido: {scenario}")
 
@@ -109,28 +104,32 @@ SCENARIOS = [
     "3a_corte_abrupto",
     "3b_corte_gradual",
     "4_subfinanciado",
+    "5a_capital_return_5pct",
+    "5b_capital_return_1pct",
 ]
-
-# ----------------------------------------------------------------------
-# Execução e coleta de métricas
-# ----------------------------------------------------------------------
 
 
 def run_scenario(scenario: str) -> list[dict]:
     cfg = build_config(scenario)
     sim = Simulation(cfg)
-
-    # Distribuição realista de riqueza inicial
     distribute_initial_wealth(sim, cfg)
-
-    # Re-classificar estratificação com base na nova riqueza
     sim.stratification.assign_classes(sim.agents)
+
+    has_capital_return = scenario.startswith("5")
 
     rows = []
     for tick in range(N_TICKS):
         sim.step()
 
+        if has_capital_return:
+            apply_capital_returns(sim)
+
         sw = sim.social_welfare.summary()
+
+        alive = [a for a in sim.agents.values() if a.state.is_alive]
+        ws = sorted(a.state.wealth for a in alive) if alive else [0]
+        n_rich = sum(1 for w in ws if w > 180) if alive else 0
+        gini = _gini(ws) if len(ws) > 1 else 0.0
 
         row = {
             "tick": tick,
@@ -148,10 +147,21 @@ def run_scenario(scenario: str) -> list[dict]:
             "total_surtax_collected": sw["total_collected"],
             "benefit_per_capita": sw["benefit_per_capita"],
             "eligibility_threshold": sw["eligibility_threshold"],
+            "n_acima_180": n_rich,
+            "gini_real": round(gini, 4),
+            "avg_wealth": round(sum(ws) / len(ws), 1) if ws else 0,
         }
         rows.append(row)
 
     return rows
+
+
+def _gini(values):
+    if not values or sum(values) == 0:
+        return 0.0
+    s = sorted(values)
+    n = len(s)
+    return (2 * sum((i + 1) * v for i, v in enumerate(s))) / (n * sum(s)) - (n + 1) / n
 
 
 def export_csv(scenario: str, rows: list[dict]) -> str:
@@ -166,13 +176,7 @@ def export_csv(scenario: str, rows: list[dict]) -> str:
     return path
 
 
-# ----------------------------------------------------------------------
-# Main
-# ----------------------------------------------------------------------
-
-
 def main():
-    # Quick sanity check on wealth distribution
     print("Verificando distribuição inicial de riqueza...")
     test_cfg = build_config("2_padrao")
     test_sim = Simulation(test_cfg)
@@ -194,12 +198,15 @@ def main():
 
         if rows:
             last = rows[-1]
+            first = rows[0]
             print(
-                f"  Gini: {last['gini']:.4f} → {last['gini_post_transfer']:.4f}  "
-                f"Pobreza: {last['poverty_rate']:.2%} → {last['poverty_rate_post_transfer']:.2%}  "
-                f"Beneficiários: {last['beneficiaries']}  "
+                f"  Gini: {last['gini']:.4f} (start: {first['gini']:.4f})  "
+                f"Pobreza: {last['poverty_rate']:.2%}  "
                 f"Graduados: {last['graduated_total']}  "
-                f"Saldo do fundo: {last['fund_balance']:.1f}"
+                f"Coletado: {last['total_surtax_collected']:,.0f}  "
+                f"Fundo: {last['fund_balance']:.0f}  "
+                f"n>180: {last['n_acima_180']}  "
+                f"Wealth avg: {last['avg_wealth']:.0f}"
             )
         print()
 

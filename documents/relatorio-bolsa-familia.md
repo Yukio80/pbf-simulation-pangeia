@@ -44,16 +44,16 @@ renda** com:
 
 | Métrica | Baseline | PBF Padrão | Corte Abrupto | Corte Gradual | Subfinanciado |
 |---------|:--------:|:----------:|:-------------:|:-------------:|:-------------:|
-| Gini | 0.4748 | 0.0640 | 0.0639 | 0.0633 | 0.0511 |
-| Gini pós-transferência | 0.4748 | 0.0640 | 0.0639 | 0.0633 | 0.0511 |
+| Gini | 0.4747 | 0.0639 | 0.0638 | 0.0634 | 0.0511 |
+| Gini pós-transferência | 0.4747 | 0.0639 | 0.0638 | 0.0634 | 0.0511 |
 | Pobreza | 38.00% | 0.00% | 0.00% | 0.00% | 0.00% |
 | Pobreza pós-transferência | 38.00% | 0.00% | 0.00% | 0.00% | 0.00% |
 | Beneficiários (final) | 0 | 0 | 0 | 0 | 0 |
 | Cobertura (final) | 0.00% | 0.00% | 0.00% | 0.00% | 0.00% |
 | Graduados acumulados | 0 | 128 | 128 | 128 | 128 |
 | Total transferido | 0 | 52,992 | 46,080 | 47,923 | 52,992 |
-| Total arrecadado | 0 | 43,140 | 36,221 | 38,173 | 42,129 |
-| Saldo do fundo | 0 | -9,852 | -9,859 | -9,751 | -10,863 |
+| Total arrecadado | 0 | 43,158 | 36,230 | 38,173 | 42,148 |
+| Saldo do fundo | 0 | -9,834 | -9,850 | -9,751 | -10,844 |
 
 ## Análise
 
@@ -61,7 +61,7 @@ renda** com:
 
 O PBF padrão graduou **128 famílias** em 500 ticks,
 contra **0** na baseline — redução de 38% para 0% na taxa de pobreza e queda
-do Gini de 0.4748 para 0.0640.
+do Gini de 0.4747 para 0.0639.
 
 O pico de beneficiários ocorreu no tick **0**
 com **80** famílias atendidas simultaneamente.
@@ -73,11 +73,11 @@ corte abrupto apresenta um déficit fiscal maior:
 
 | Métrica | Abrupto | Gradual (taper 0.3) |
 |---------|:-------:|:-------------------:|
-| Saldo do fundo | -9,859 | -9,751 |
-| Diferença | — | -108 (menos deficitário) |
-| Gini final | 0.0639 | 0.0633 |
+| Saldo do fundo | -9,850 | -9,751 |
+| Diferença | — | -99 (menos deficitário) |
+| Gini final | 0.0638 | 0.0634 |
 
-O taper gradual reduz o déficit em 1.1%
+O taper gradual reduz o déficit em 1.0%
 em relação ao corte abrupto, sem comprometer o número de graduações.
 
 ### 3. Subfinanciamento
@@ -89,8 +89,8 @@ demais cenários —, indicando robustez:
 | Métrica | PBF Padrão (5%) | Subfinanciado (1%) | Variação |
 |---------|:---------------:|:------------------:|:--------:|
 | Graduados | 128 | 128 | 0% |
-| Arrecadação | 43,140 | 42,129 | -2.3% |
-| Déficit | -9,852 | -10,863 | 10.3% |
+| Arrecadação | 43,158 | 42,148 | -2.3% |
+| Déficit | -9,834 | -10,844 | 10.3% |
 
 > **Nota:** O déficit fiscal generalizado ocorre porque o benefício (12)
 > supera a arrecadação da sobretaxa. Isso é consistente com programas reais
@@ -114,7 +114,7 @@ demais cenários —, indicando robustez:
    o Gini, enquanto a baseline manteve 38% de pobreza.
 
 2. **Graduação gradual é fiscalmente superior**: o taper de 30% reduziu o
-   déficit em 1.1% em relação ao corte abrupto, sem perder
+   déficit em 1.0% em relação ao corte abrupto, sem perder
    eficácia no número de famílias graduadas.
 
 3. **O programa é robusto**: mesmo com 80% de redução na alíquota (1% vs 5%),
@@ -141,4 +141,4 @@ demais cenários —, indicando robustez:
 
 ---
 
-*Relatório gerado em 13/06/2026 13:40 pelo harness `scenarios/run_bolsa_familia.py`*
+*Relatório gerado em 13/06/2026 14:12 pelo harness `scenarios/run_bolsa_familia.py`*
