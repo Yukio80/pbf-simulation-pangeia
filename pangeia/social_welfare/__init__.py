@@ -19,6 +19,8 @@ class Beneficiary:
     health_checked: bool = True
     ticks_in_program: int = 0
     graduated: bool = False
+    in_transition: bool = False
+    ticks_in_transition: int = 0
 
 
 class SocialWelfareSystem:
@@ -97,16 +99,12 @@ class SocialWelfareSystem:
         self.total_disbursed += tick_disbursed
 
     def _effective_payout(self, ben: Beneficiary) -> float:
-        payout = self.config.benefit_per_capita
-        if self.config.graduation_mode == GraduationMode.GRADUAL:
-            taper = min(
-                1.0,
-                ben.ticks_in_program / self.config.graduation_grace_ticks
-                if self.config.graduation_grace_ticks > 0
-                else 1.0,
+        if ben.in_transition:
+            remaining = 1.0 - (
+                ben.ticks_in_transition * self.config.graduation_transition_band
             )
-            payout *= 1.0 - (taper * self.config.graduation_transition_band)
-        return max(0.0, payout)
+            return max(0.0, self.config.benefit_per_capita * remaining)
+        return self.config.benefit_per_capita
 
     def _check_conditionalities(
         self, sim: Any, agents: List[Agent], tick: int
@@ -130,11 +128,20 @@ class SocialWelfareSystem:
     def _process_graduation(self, tick: int) -> None:
         graduated: List[str] = []
         for agent_id, ben in self.beneficiaries.items():
-            if ben.ticks_in_program >= self.config.graduation_grace_ticks:
-                if self.config.graduation_mode == GraduationMode.ABRUPT:
+            if ben.ticks_in_program < self.config.graduation_grace_ticks:
+                continue
+
+            if self.config.graduation_mode == GraduationMode.ABRUPT:
+                graduated.append(agent_id)
+
+            elif self.config.graduation_mode == GraduationMode.GRADUAL:
+                if not ben.in_transition:
+                    ben.in_transition = True
+                    ben.ticks_in_transition = 0
+                ben.ticks_in_transition += 1
+                if self._effective_payout(ben) <= 0:
                     graduated.append(agent_id)
-                else:
-                    graduated.append(agent_id)
+
         for agent_id in graduated:
             self.beneficiaries[agent_id].graduated = True
             del self.beneficiaries[agent_id]
@@ -158,7 +165,9 @@ class SocialWelfareSystem:
                     idx = next(
                         i for i, a in enumerate(agents) if a.agent_id == agent.agent_id
                     )
-                    post_wealth[idx] += self.config.benefit_per_capita
+                    post_wealth[idx] += self._effective_payout(
+                        self.beneficiaries[agent.agent_id]
+                    )
             self.gini_after = self._gini(post_wealth)
 
             pov_line = self.config.eligibility_threshold
