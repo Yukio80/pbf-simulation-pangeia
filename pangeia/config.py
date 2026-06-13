@@ -3,6 +3,7 @@ from enum import Enum
 from typing import Any, Dict, Optional
 
 from pangeia.persistence.config import PersistenceConfig
+from pangeia.social_welfare.config import SocialWelfareConfig
 
 
 @dataclass
@@ -77,6 +78,7 @@ class SimulationConfig:
     agent: AgentConfig = field(default_factory=AgentConfig)
     economy: EconomyConfig = field(default_factory=EconomyConfig)
     governance: GovernanceConfig = field(default_factory=GovernanceConfig)
+    social_welfare: SocialWelfareConfig = field(default_factory=SocialWelfareConfig)
     persistence: PersistenceConfig = field(default_factory=PersistenceConfig)
 
     @classmethod

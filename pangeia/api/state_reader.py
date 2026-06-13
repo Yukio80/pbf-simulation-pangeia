@@ -55,6 +55,7 @@ class StateReader:
             "history": s.get("narratives", {}),
             "collective_memory": s.get("collective_memory", {}),
             "civilization": s.get("civilization", {}),
+            "social_welfare": s.get("social_welfare", {}),
         }
 
     def world(self) -> Dict:
@@ -99,6 +100,9 @@ class StateReader:
 
     def diplomacy(self) -> Dict:
         return self._s("diplomacy", {})
+
+    def social_welfare(self) -> Dict:
+        return self._s("social_welfare", {})
 
     def collective_memory(self) -> Dict:
         return self._s("collective_memory", {})

@@ -29,6 +29,7 @@ from pangeia.core.collective_memory import CollectiveMemorySystem, merge_emotion
 from pangeia.engine.agent_array import AgentArray
 from pangeia.engine.batch_processor import BatchProcessor
 from pangeia.persistence import AuditRecorder, AuditLog, InMemoryAuditLog, PersistenceBackend
+from pangeia.social_welfare import SocialWelfareSystem, SocialWelfareConfig
 
 
 def _handle_working(sim, agent, tick):
@@ -188,6 +189,9 @@ class Simulation:
         self.newsroom = NewsRoom(rng=self.rng)
         self.icarus: Optional[IcarusGateway] = None
         self.collective_memory = CollectiveMemorySystem(rng=self.rng)
+        self.social_welfare = SocialWelfareSystem(
+            self.config.social_welfare
+        )
 
         self._setup_audit_log(audit_log)
         self._initialize_population()
@@ -400,6 +404,7 @@ class Simulation:
         self.ideology_system.step(self.agents, tick)
         self.technology.step(self)
         self.diplomacy.step(self)
+        self.social_welfare.step(self, tick)
         self.stratification.assign_classes(self.agents)
         self.stratification.track_mobility()
 

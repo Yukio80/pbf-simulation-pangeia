@@ -50,6 +50,7 @@ def _build_state_snapshot(sim: Simulation) -> Dict[str, Any]:
         "narratives_timeline": sim.narratives.timeline[-200:],
         "stratification": sim.stratification.summary(),
         "diplomacy": sim.diplomacy.summary(),
+        "social_welfare": sim.social_welfare.summary(),
     }
 
 

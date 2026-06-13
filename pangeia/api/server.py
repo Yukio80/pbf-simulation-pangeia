@@ -240,6 +240,11 @@ async def stratification():
     return get_reader().stratification()
 
 
+@app.get("/social-welfare")
+async def social_welfare():
+    return get_reader().social_welfare()
+
+
 # ─── Agents ──────────────────────────────────────────────────
 
 @app.get("/agents")
